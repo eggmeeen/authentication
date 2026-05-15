@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { Building2, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Moon, Search, Sun } from "lucide-react";
 import type { ChinaMapDataset, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
 
@@ -178,6 +178,8 @@ interface MapLabel {
   text: string;
   x: number;
   y: number;
+  offsetX?: number;
+  offsetY?: number;
   priority: number;
   projectId?: number;
   active?: boolean;
@@ -223,6 +225,7 @@ function ChinaMapCanvas({
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const viewBoxRef = useRef(viewBox);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestureScaleRef = useRef(1);
   const gestureRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startX: number;
@@ -362,6 +365,44 @@ function ChinaMapCanvas({
   );
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const sensitivity = event.ctrlKey ? 0.006 : 0.0014;
+      zoomAt(Math.exp(event.deltaY * sensitivity), event.clientX - rect.left, event.clientY - rect.top);
+    };
+
+    const handleGestureStart = (event: Event) => {
+      event.preventDefault();
+      gestureScaleRef.current = 1;
+    };
+
+    const handleGestureChange = (event: Event) => {
+      event.preventDefault();
+      const gesture = event as Event & { scale?: number; clientX?: number; clientY?: number };
+      const nextScale = gesture.scale ?? 1;
+      const deltaScale = nextScale / gestureScaleRef.current;
+      gestureScaleRef.current = nextScale;
+      const rect = container.getBoundingClientRect();
+      zoomAt(1 / Math.max(0.25, Math.min(4, deltaScale)), (gesture.clientX ?? rect.left + rect.width / 2) - rect.left, (gesture.clientY ?? rect.top + rect.height / 2) - rect.top);
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    container.addEventListener("gesturestart", handleGestureStart, { passive: false });
+    container.addEventListener("gesturechange", handleGestureChange, { passive: false });
+    container.addEventListener("gestureend", handleGestureStart, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("gesturestart", handleGestureStart);
+      container.removeEventListener("gesturechange", handleGestureChange);
+      container.removeEventListener("gestureend", handleGestureStart);
+    };
+  }, [zoomAt]);
+
+  useEffect(() => {
     if (!selectedPoint) return;
     const targetWidth = coordinateMode === "city" ? 230 : 170;
     const targetHeight = targetWidth * (fullViewBox.height / fullViewBox.width);
@@ -470,23 +511,41 @@ function ChinaMapCanvas({
     }
 
     if (selectedProject && scale >= 2.2) {
-      for (const item of nearbyProjects) {
+      const offsets = [
+        { x: 84, y: -34 },
+        { x: -84, y: -34 },
+        { x: 92, y: 34 },
+        { x: -92, y: 34 },
+        { x: 0, y: -52 },
+        { x: 0, y: 52 },
+      ];
+      for (const [index, item] of nearbyProjects.entries()) {
+        const isActive = item.project.id === selectedProject.id;
+        const offset = offsets[index % offsets.length];
         candidates.push({
           id: `company-${item.project.id}`,
           kind: "company",
           text: item.project.company,
           x: item.point.x,
           y: item.point.y,
-          priority: item.project.id === selectedProject.id ? 2000 : 900 - item.distance,
-          active: item.project.id === selectedProject.id,
+          offsetX: isActive ? 104 : offset.x,
+          offsetY: isActive ? -42 : offset.y,
+          priority: isActive ? 2000 : 900 - item.distance,
+          active: isActive,
           projectId: item.project.id,
         });
       }
     }
 
-    const placed: Array<{ x: number; y: number; width: number; height: number }> = [];
+    const targetScreen = selectedPoint ? mapToScreen(selectedPoint.x, selectedPoint.y) : null;
+    const placed: Array<{ x: number; y: number; width: number; height: number }> = targetScreen
+      ? [{ x: targetScreen.x - 34, y: targetScreen.y - 34, width: 68, height: 68 }]
+      : [];
     return candidates
-      .map((label) => ({ label, screen: mapToScreen(label.x, label.y) }))
+      .map((label) => {
+        const base = mapToScreen(label.x, label.y);
+        return { label, screen: { x: base.x + (label.offsetX ?? 0), y: base.y + (label.offsetY ?? 0) } };
+      })
       .filter(({ screen }) => screen.x > -90 && screen.y > -40 && screen.x < viewportSize.width + 90 && screen.y < viewportSize.height + 40)
       .sort((a, b) => b.label.priority - a.label.priority)
       .filter(({ label, screen }) => {
@@ -498,17 +557,7 @@ function ChinaMapCanvas({
         return true;
       })
       .map(({ label }) => label);
-  }, [activeProvince, mapData.provinces, mapToScreen, nearbyProjects, points, provinceNames, scale, selectedProject, viewportSize]);
-
-  const onWheel = useCallback(
-    (event: ReactWheelEvent<SVGSVGElement>) => {
-      event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
-      const factor = Math.exp(event.deltaY * 0.0012);
-      zoomAt(factor, event.clientX - rect.left, event.clientY - rect.top);
-    },
-    [zoomAt],
-  );
+  }, [activeProvince, mapData.provinces, mapToScreen, nearbyProjects, points, provinceNames, scale, selectedPoint, selectedProject, viewportSize]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -593,7 +642,6 @@ function ChinaMapCanvas({
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
         role="img"
         aria-label="中国认证项目分布线框图"
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -667,7 +715,8 @@ function ChinaMapCanvas({
 
       <div className="map-label-layer" aria-hidden="true">
         {overlayLabels.map((label) => {
-          const screen = mapToScreen(label.x, label.y);
+          const base = mapToScreen(label.x, label.y);
+          const screen = { x: base.x + (label.offsetX ?? 0), y: base.y + (label.offsetY ?? 0) };
           return (
             <button
               key={label.id}

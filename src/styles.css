@@ -18,8 +18,10 @@ body,
 #root {
   width: 100%;
   min-width: 320px;
-  min-height: 100%;
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 button,
@@ -32,7 +34,10 @@ button {
 }
 
 .app-shell {
-  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
   background:
     linear-gradient(135deg, rgba(21, 94, 117, 0.08), rgba(245, 158, 11, 0.06) 45%, rgba(16, 185, 129, 0.08)),
     #eef3f2;
@@ -156,8 +161,9 @@ p {
   grid-template-columns: minmax(0, 1fr) minmax(340px, 430px);
   gap: 16px;
   max-width: 1600px;
-  height: calc(100vh - 110px);
-  min-height: 720px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
 }
 
@@ -316,6 +322,7 @@ p {
   height: 100%;
   min-width: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .china-map {
@@ -325,6 +332,8 @@ p {
   cursor: grab;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .china-map:active {
@@ -492,8 +501,19 @@ p {
   font-size: 12px;
 }
 
+.map-label.is-company::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  border-top: 1px solid rgba(249, 115, 22, 0.44);
+  transform: translate(-50%, -50%);
+  z-index: -1;
+}
+
 .map-label.is-active {
-  z-index: 4;
+  z-index: 6;
   color: #ffffff;
   background: #ea580c;
   box-shadow: 0 10px 24px rgba(249, 115, 22, 0.28);
@@ -527,7 +547,7 @@ p {
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 3;
+  z-index: 8;
   width: 22px;
   height: 22px;
   pointer-events: none;
@@ -902,16 +922,16 @@ p {
 
   .workspace {
     grid-template-columns: 1fr;
-    height: auto;
+    height: 100%;
     min-height: 0;
   }
 
   .visual-pane {
-    min-height: 660px;
+    min-height: 0;
   }
 
   .side-panel {
-    min-height: 560px;
+    min-height: 0;
   }
 }
 
@@ -938,7 +958,7 @@ p {
   }
 
   .visual-pane {
-    min-height: 620px;
+    min-height: 0;
   }
 }
 
