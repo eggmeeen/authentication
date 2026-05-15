@@ -315,13 +315,20 @@ p {
   width: 100%;
   height: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .china-map {
   display: block;
   width: 100%;
   height: 100%;
-  touch-action: manipulation;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.china-map:active {
+  cursor: grabbing;
 }
 
 .map-water {
@@ -376,54 +383,35 @@ p {
   stroke-width: 0.68;
 }
 
+.road-lines line {
+  stroke: rgba(168, 120, 55, 0.32);
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-dasharray: 3 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.theme-night .road-lines line {
+  stroke: rgba(251, 191, 36, 0.46);
+  stroke-width: 1.35;
+}
+
+.town-dots circle {
+  fill: rgba(11, 87, 102, 0.72);
+  stroke: rgba(255, 255, 255, 0.82);
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.theme-night .town-dots circle {
+  fill: rgba(165, 243, 252, 0.82);
+  stroke: rgba(8, 17, 30, 0.9);
+  stroke-width: 1;
+}
+
 .theme-night .province-boundaries path {
   stroke: rgba(251, 191, 36, 0.92);
   stroke-width: 1.45;
-}
-
-.province-labels text {
-  opacity: 0;
-  fill: #0f3d4a;
-  paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.76);
-  stroke-width: 4;
-  font-size: 15px;
-  font-weight: 900;
-  text-anchor: middle;
-  pointer-events: none;
-  transition: opacity 220ms ease;
-}
-
-.province-labels text.is-visible {
-  opacity: 1;
-}
-
-.province-labels tspan {
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.theme-night .province-labels text {
-  fill: #f8fafc;
-  stroke: rgba(5, 12, 22, 0.82);
-  stroke-width: 4.5;
-}
-
-.city-labels text {
-  fill: #1f5967;
-  paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.82);
-  stroke-width: 3;
-  font-size: 7px;
-  font-weight: 800;
-  text-anchor: middle;
-  pointer-events: none;
-}
-
-.theme-night .city-labels text {
-  fill: #dbeafe;
-  stroke: rgba(5, 12, 22, 0.9);
-  stroke-width: 3.5;
 }
 
 .point-hit {
@@ -457,37 +445,127 @@ p {
   stroke: #fff7ed;
 }
 
-.target-marker circle {
-  fill: none;
-  stroke: #f97316;
-  stroke-width: 2.2;
-  vector-effect: non-scaling-stroke;
-  transform-box: fill-box;
-  transform-origin: center;
+.map-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.target-marker circle:nth-child(1) {
-  fill: #f97316;
-  stroke: #fff7ed;
+.map-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 190px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: #0f2d35;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 4px 12px rgba(19, 32, 37, 0.12);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.map-label.is-province {
+  padding: 1px 4px;
+  color: #173740;
+  background: rgba(244, 248, 245, 0.58);
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.map-label.is-city {
+  color: #164e63;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.map-label.is-company {
+  border: 1px solid rgba(249, 115, 22, 0.34);
+  color: #44210b;
+  background: rgba(255, 247, 237, 0.9);
+  box-shadow: 0 8px 18px rgba(120, 53, 15, 0.18);
+  font-size: 12px;
+}
+
+.map-label.is-active {
+  z-index: 4;
+  color: #ffffff;
+  background: #ea580c;
+  box-shadow: 0 10px 24px rgba(249, 115, 22, 0.28);
+}
+
+.theme-night .map-label {
+  color: #e6faff;
+  background: rgba(7, 17, 29, 0.76);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.theme-night .map-label.is-province {
+  color: #ffffff;
+  background: rgba(5, 12, 22, 0.48);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  box-shadow: none;
+}
+
+.theme-night .map-label.is-company {
+  color: #fff7ed;
+  border-color: rgba(251, 146, 60, 0.42);
+  background: rgba(70, 29, 11, 0.88);
+}
+
+.theme-night .map-label.is-active {
+  color: #07111d;
+  background: #fbbf24;
+}
+
+.target-pulse {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.target-pulse span {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #f97316;
+  border-radius: 999px;
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.4);
+}
+
+.target-pulse span:nth-child(1) {
+  background: #f97316;
+  border-color: #fff7ed;
+  transform: scale(0.52);
   animation: target-core 1.2s ease-in-out infinite;
 }
 
-.target-marker circle:nth-child(2),
-.target-marker circle:nth-child(3) {
+.target-pulse span:nth-child(2),
+.target-pulse span:nth-child(3) {
   opacity: 0;
   animation: target-pulse 1.8s ease-out infinite;
 }
 
-.target-marker circle:nth-child(3) {
+.target-pulse span:nth-child(3) {
   animation-delay: 0.58s;
 }
 
-.theme-night .target-marker circle {
-  stroke: #fbbf24;
+.theme-night .target-pulse span {
+  border-color: #fbbf24;
+  box-shadow: 0 0 20px rgba(251, 191, 36, 0.5);
 }
 
-.theme-night .target-marker circle:nth-child(1) {
-  fill: #fb923c;
+.theme-night .target-pulse span:nth-child(1) {
+  background: #fb923c;
+  border-color: #fff7ed;
 }
 
 .map-controls {
