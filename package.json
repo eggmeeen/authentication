@@ -1,0 +1,31 @@
+{
+  "name": "cert-project-map",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:data": "python3 scripts/build_data.py && python3 scripts/build_boundaries.py",
+    "build:projects": "python3 scripts/build_data.py",
+    "build:boundaries": "python3 scripts/build_boundaries.py",
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.555.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "three": "^0.181.2",
+    "vite": "^7.2.7"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.21",
+    "@types/node": "^25.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.1",
+    "typescript": "^5.9.3"
+  }
+}
