@@ -55,7 +55,6 @@ export interface ProjectDataset {
   cities: CityGroup[];
 }
 
-export type ViewMode = "map" | "globe";
 export type CoordinateMode = "city" | "address";
 export type ThemeMode = "day" | "night";
 
@@ -71,14 +70,53 @@ export interface MapPoint {
   projectIds: number[];
 }
 
-export interface BoundaryDataset {
+export interface ChinaMapProvince {
+  code: string;
+  name: string;
+  fullname: string;
+  path: string;
+  label: {
+    x: number;
+    y: number;
+  };
+  count: number;
+  colorIndex: number;
+}
+
+export interface ChinaMapPath {
+  province: string;
+  name: string;
+  path: string;
+}
+
+export interface ChinaMapCity {
+  province: string;
+  name: string;
+  fullname: string;
+  x: number;
+  y: number;
+}
+
+export interface ChinaMapDataset {
   metadata: {
     source: string;
     sourceUrl: string;
-    provinceLineCount: number;
-    cityLineCount: number;
-    note: string;
+    width: number;
+    height: number;
+    padding: number;
+    projection: {
+      type: "mercator";
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+      scale: number;
+      yOffset: number;
+    };
+    provinceCount: number;
+    cityCount: number;
   };
-  provinceLines: number[][][];
-  cityLines: number[][][];
+  provinces: ChinaMapProvince[];
+  cityPaths: ChinaMapPath[];
+  cities: ChinaMapCity[];
 }

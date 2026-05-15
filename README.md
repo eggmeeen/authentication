@@ -19,6 +19,7 @@ http://localhost:5173/
 ## 数据产物
 
 - `public/data/projects.json`: 网页读取的前端数据库。
+- `public/data/china-map.json`: 预投影后的中国省市线框地图，不依赖在线瓦片底图。
 - `data/projects.sqlite`: 本地 SQLite 数据库，含 `projects`、`cities`、`project_search` 三张表。
 - `data/projects.csv`: 可用 Excel 打开的清洗结果。
 
@@ -56,4 +57,4 @@ npx vercel --prod
 
 - 项目清单：本地 Word 文件。
 - 行政区坐标：`city-geo` 的 `data.json`。
-- 图木舒克市补充坐标：GeoJSON.CN 中国行政区划数据。
+- 中国省市边界与图木舒克市补充坐标：GeoJSON.CN 中国行政区划数据。
