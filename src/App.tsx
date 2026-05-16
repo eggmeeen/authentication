@@ -29,8 +29,8 @@ const NIGHT_PROVINCE_COLORS = [
   "#443b17",
 ];
 
-const MIN_VIEWBOX_WIDTH = 88;
-const MIN_VIEWBOX_HEIGHT = 72;
+const MIN_VIEWBOX_WIDTH = 76;
+const MIN_VIEWBOX_HEIGHT = 62;
 
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "");
@@ -1232,7 +1232,6 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isMobileLayout, setIsMobileLayout] = useState(() => window.innerWidth <= 780);
-  const [mobilePanel, setMobilePanel] = useState<"map" | "list">("map");
 
   useEffect(() => {
     Promise.all([
@@ -1256,10 +1255,7 @@ export default function App() {
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 780px)");
-    const sync = (matches: boolean) => {
-      setIsMobileLayout(matches);
-      if (!matches) setMobilePanel("map");
-    };
+    const sync = (matches: boolean) => setIsMobileLayout(matches);
     sync(media.matches);
     const handleChange = (event: MediaQueryListEvent) => sync(event.matches);
     media.addEventListener("change", handleChange);
@@ -1288,7 +1284,6 @@ export default function App() {
 
   const onSelectProject = useCallback((projectId: number) => {
     setSelectedProjectId(projectId);
-    setMobilePanel("map");
   }, []);
 
   const clearSearch = useCallback(() => {
@@ -1362,20 +1357,7 @@ export default function App() {
       </header>
 
       <section className={`workspace ${isMobileLayout ? "is-mobile" : ""}`}>
-        {isMobileLayout && (
-          <div className="mobile-panel-switcher" aria-label="移动端视图切换">
-            <button className={mobilePanel === "map" ? "is-active" : ""} type="button" onClick={() => setMobilePanel("map")}>
-              <MapPin size={15} />
-              地图
-            </button>
-            <button className={mobilePanel === "list" ? "is-active" : ""} type="button" onClick={() => setMobilePanel("list")}>
-              <ListFilter size={15} />
-              列表
-            </button>
-          </div>
-        )}
-
-        <section className={`visual-pane ${!isMobileLayout || mobilePanel === "map" ? "is-active" : "is-hidden-mobile"}`}>
+        <section className="visual-pane is-active">
           <div className="toolbar">
             <div className="search-box">
               <Search size={18} />
@@ -1428,7 +1410,7 @@ export default function App() {
           </div>
         </section>
 
-        <aside className={`side-panel ${!isMobileLayout || mobilePanel === "list" ? "is-active" : "is-hidden-mobile"}`}>
+        <aside className="side-panel is-active">
           <div className="panel-head">
             <div>
               <span className="eyebrow">

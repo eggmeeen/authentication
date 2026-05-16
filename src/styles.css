@@ -168,10 +168,6 @@ p {
   margin: 0 auto;
 }
 
-.mobile-panel-switcher {
-  display: none;
-}
-
 .visual-pane,
 .side-panel {
   min-width: 0;
@@ -1195,91 +1191,88 @@ p {
 
   .workspace.is-mobile {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 10px;
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    position: relative;
   }
 
-  .mobile-panel-switcher {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-
-  .mobile-panel-switcher button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    height: 40px;
-    border: 1px solid rgba(19, 32, 37, 0.12);
-    border-radius: 8px;
-    color: #46565f;
-    background: rgba(255, 255, 255, 0.82);
-    font-weight: 800;
-  }
-
-  .mobile-panel-switcher button.is-active {
-    color: #f8fafc;
-    border-color: rgba(21, 94, 117, 0.4);
-    background: #155e75;
-    box-shadow: 0 10px 20px rgba(21, 94, 117, 0.2);
-  }
-
-  .theme-night .mobile-panel-switcher button {
-    color: #d6e7ef;
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(15, 23, 42, 0.88);
-  }
-
-  .theme-night .mobile-panel-switcher button.is-active {
-    color: #07111d;
-    border-color: rgba(251, 191, 36, 0.36);
-    background: #fbbf24;
-  }
-
-  .workspace.is-mobile .visual-pane,
-  .workspace.is-mobile .side-panel {
+  .workspace.is-mobile .visual-pane {
     min-height: 0;
     height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .workspace.is-mobile .visual-pane.is-active {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 100%;
   }
 
   .workspace.is-mobile .side-panel.is-active {
     display: grid;
-  }
-
-  .workspace.is-mobile .is-hidden-mobile {
-    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 22;
+    height: min(42dvh, 380px);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -18px 40px rgba(19, 32, 37, 0.18);
   }
 
   .workspace.is-mobile .stage {
     min-height: 0;
+    padding-bottom: min(42dvh, 380px);
   }
 
-  .workspace.is-mobile .visual-pane.is-active {
-    min-height: min(64dvh, 700px);
-  }
-
-  .workspace.is-mobile .side-panel.is-active {
-    min-height: 0;
+  .workspace.is-mobile .side-panel.is-active::before {
+    content: "";
+    width: 42px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 999px;
+    background: rgba(19, 32, 37, 0.16);
   }
 
   .project-list {
     -webkit-overflow-scrolling: touch;
   }
 
+  .workspace.is-mobile .panel-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding-top: 10px;
+    background: inherit;
+  }
+
+  .workspace.is-mobile .selection-summary {
+    position: sticky;
+    top: 69px;
+    z-index: 2;
+    background: inherit;
+  }
+
   .map-controls {
     right: 10px;
-    bottom: 10px;
+    bottom: calc(min(42dvh, 380px) + 10px);
   }
 
   .map-controls button {
     min-width: 46px;
     height: 42px;
+  }
+
+  .workspace.is-mobile .focus-card {
+    bottom: calc(min(42dvh, 380px) + 10px);
+    left: 10px;
+    right: 68px;
+    width: auto;
+    z-index: 20;
+  }
+
+  .workspace.is-mobile .map-mode-note {
+    display: none;
   }
 }
 
@@ -1300,13 +1293,6 @@ p {
 
   .brand p {
     font-size: 12px;
-  }
-
-  .focus-card {
-    left: 10px;
-    right: 10px;
-    bottom: 10px;
-    width: auto;
   }
 
   .panel-head {
@@ -1335,5 +1321,22 @@ p {
 
   .focus-card p {
     font-size: 12px;
+  }
+
+  .workspace.is-mobile .side-panel.is-active {
+    height: min(46dvh, 420px);
+  }
+
+  .workspace.is-mobile .stage {
+    padding-bottom: min(46dvh, 420px);
+  }
+
+  .workspace.is-mobile .map-controls {
+    bottom: calc(min(46dvh, 420px) + 10px);
+  }
+
+  .workspace.is-mobile .focus-card {
+    right: 58px;
+    bottom: calc(min(46dvh, 420px) + 10px);
   }
 }
