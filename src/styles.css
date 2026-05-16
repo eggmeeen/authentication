@@ -446,18 +446,52 @@ p {
   stroke-width: 0.68;
 }
 
-.road-lines line {
-  stroke: rgba(168, 120, 55, 0.32);
-  stroke-width: 1.15;
+.road-lines path {
+  fill: none;
   stroke-linecap: round;
-  stroke-dasharray: 3 4;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 
-.theme-night .road-lines line {
-  stroke: rgba(251, 191, 36, 0.46);
-  stroke-width: 1.35;
+.road-lines .road-motorway {
+  stroke: rgba(217, 119, 6, 0.48);
+  stroke-width: 1.55;
+}
+
+.road-lines .road-trunk {
+  stroke: rgba(234, 88, 12, 0.4);
+  stroke-width: 1.18;
+}
+
+.road-lines .road-primary {
+  stroke: rgba(14, 116, 144, 0.34);
+  stroke-width: 0.92;
+}
+
+.road-lines .road-secondary {
+  stroke: rgba(21, 94, 117, 0.22);
+  stroke-width: 0.72;
+}
+
+.theme-night .road-lines .road-motorway {
+  stroke: rgba(251, 191, 36, 0.82);
+  stroke-width: 1.8;
+}
+
+.theme-night .road-lines .road-trunk {
+  stroke: rgba(249, 115, 22, 0.72);
+  stroke-width: 1.38;
+}
+
+.theme-night .road-lines .road-primary {
+  stroke: rgba(103, 232, 249, 0.56);
+  stroke-width: 1.02;
+}
+
+.theme-night .road-lines .road-secondary {
+  stroke: rgba(147, 197, 253, 0.34);
+  stroke-width: 0.8;
 }
 
 .theme-night .province-boundaries path {

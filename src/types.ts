@@ -98,10 +98,18 @@ export interface ChinaMapCity {
   y: number;
 }
 
+export interface ChinaMapRoad {
+  id: number;
+  class: "motorway" | "trunk" | "primary" | "secondary";
+  path: string;
+}
+
 export interface ChinaMapDataset {
   metadata: {
     source: string;
     sourceUrl: string;
+    roadSource?: string;
+    roadSourceUrl?: string;
     width: number;
     height: number;
     padding: number;
@@ -116,8 +124,10 @@ export interface ChinaMapDataset {
     };
     provinceCount: number;
     cityCount: number;
+    roadCount?: number;
   };
   provinces: ChinaMapProvince[];
   cityPaths: ChinaMapPath[];
   cities: ChinaMapCity[];
+  roads: ChinaMapRoad[];
 }

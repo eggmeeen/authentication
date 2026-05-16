@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { Building2, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Moon, Search, Sun } from "lucide-react";
-import type { ChinaMapDataset, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
+import type { ChinaMapDataset, ChinaMapRoad, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
 
 const PROVINCE_COLORS = [
   "#d8eee7",
@@ -191,14 +191,6 @@ interface MapLabel {
   projectId?: number;
   provinceName?: string;
   active?: boolean;
-}
-
-interface RoadSegment {
-  id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
 }
 
 interface ProjectHighlightPoint {
@@ -397,16 +389,6 @@ function ChinaMapCanvas({
       counts.set(province, (counts.get(province) ?? 0) + 1);
     }
     return counts;
-  }, [projects]);
-
-  const projectCityNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const project of projects) {
-      const province = normalizeProvinceName(project.province);
-      names.add(`${province}|${project.displayCity}`);
-      names.add(`${province}|${project.displayCityLabel}`);
-    }
-    return names;
   }, [projects]);
 
   const currentScale = fullViewBox.width / viewBox.width;
@@ -608,33 +590,14 @@ function ChinaMapCanvas({
     [viewportSize, zoomAt],
   );
 
-  const roadSegments = useMemo<RoadSegment[]>(() => {
-    const projectCities = mapData.cities.filter(
-      (city) => projectCityNames.has(`${city.province}|${city.name}`) || projectCityNames.has(`${city.province}|${city.fullname}`),
-    );
-    const segments = new Map<string, RoadSegment>();
-    for (const city of projectCities) {
-      const neighbors = projectCities
-        .filter((candidate) => candidate !== city && candidate.province === city.province)
-        .map((candidate) => ({ city: candidate, distance: distance(city, candidate) }))
-        .filter((item) => item.distance < 120)
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 2);
-      for (const neighbor of neighbors) {
-        const key = [city.fullname, neighbor.city.fullname].sort().join("|");
-        if (!segments.has(key)) {
-          segments.set(key, {
-            id: key,
-            x1: city.x,
-            y1: city.y,
-            x2: neighbor.city.x,
-            y2: neighbor.city.y,
-          });
-        }
-      }
-    }
-    return Array.from(segments.values());
-  }, [mapData.cities, projectCityNames]);
+  const visibleRoads = useMemo<ChinaMapRoad[]>(() => {
+    const zoomLevel = labelScale;
+    return mapData.roads.filter((road) => {
+      if (road.class === "secondary") return zoomLevel >= 1.45;
+      if (road.class === "primary") return zoomLevel >= 1.08;
+      return true;
+    });
+  }, [labelScale, mapData.roads]);
 
   const provinceNeighbors = useMemo(() => {
     const projectProvinceSet = new Set(projects.map((project) => normalizeProvinceName(project.province)));
@@ -1060,9 +1023,9 @@ function ChinaMapCanvas({
             <path key={`${city.province}-${city.name}-${index}`} d={city.path} />
           ))}
         </g>
-        <g className="road-lines">
-          {roadSegments.map((segment) => (
-            <line key={segment.id} x1={segment.x1} y1={segment.y1} x2={segment.x2} y2={segment.y2} />
+        <g className="road-lines" aria-hidden="true">
+          {visibleRoads.map((road) => (
+            <path key={road.id} className={`road-${road.class}`} d={road.path} />
           ))}
         </g>
         <g className="province-boundaries">
