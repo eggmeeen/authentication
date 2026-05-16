@@ -41,6 +41,10 @@ function normalizeProvinceName(value: string): string {
     .replace(/壮族|回族|维吾尔/g, "");
 }
 
+function companyCode(project: ProjectRecord): string {
+  return String(project.id).padStart(3, "0");
+}
+
 function coordFor(project: ProjectRecord, mode: CoordinateMode): Coord | null {
   if (mode === "address" && project.addressCoord) return project.addressCoord;
   return project.cityCoord ?? project.addressCoord;
@@ -90,35 +94,12 @@ function buildCityPoints(projects: ProjectRecord[], mapData: ChinaMapDataset): M
   return Array.from(groups.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "zh-CN"));
 }
 
-function buildProjectPoints(projects: ProjectRecord[], mode: CoordinateMode, mapData: ChinaMapDataset): MapPoint[] {
-  const seen = new Map<string, number>();
-  const points: MapPoint[] = [];
-  for (const project of projects) {
-    const coord = coordFor(project, mode);
-    if (!coord) continue;
-    const projected = projectCoord(coord, mapData);
-    const coordKey = `${projected.x.toFixed(2)}|${projected.y.toFixed(2)}`;
-    const index = seen.get(coordKey) ?? 0;
-    seen.set(coordKey, index + 1);
-    const angle = ((project.id * 137.508 + index * 31) % 360) * (Math.PI / 180);
-    const radius = mode === "address" ? Math.min(10, index * 2.2) : 0;
-    points.push({
-      id: `project-${project.id}`,
-      type: "project",
-      label: project.company,
-      sublabel: `${project.displayCityLabel || project.displayCity} · ${project.district || "地级行政区"}`,
-      count: 1,
-      lng: projected.x + Math.cos(angle) * radius,
-      lat: projected.y + Math.sin(angle) * radius,
-      projectId: project.id,
-      projectIds: [project.id],
-    });
-  }
-  return points;
-}
-
 function projectMatches(project: ProjectRecord, query: string): boolean {
-  const tokens = query.trim().split(/\s+/).filter(Boolean).map(normalizeText);
+  const tokens = query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(normalizeText);
   if (!tokens.length) return true;
   const haystack = normalizeText(
     [
@@ -126,6 +107,9 @@ function projectMatches(project: ProjectRecord, query: string): boolean {
       project.companyRaw,
       project.address,
       project.addressRaw,
+      companyCode(project),
+      String(project.id),
+      project.sequence,
       project.province,
       project.displayCity,
       project.displayCityLabel,
@@ -133,7 +117,12 @@ function projectMatches(project: ProjectRecord, query: string): boolean {
       project.region,
     ].join(" "),
   );
-  return tokens.every((token) => haystack.includes(token));
+  return tokens.every((token) => {
+    if (/^\d+$/.test(token)) {
+      return companyCode(project).includes(token) || normalizeText(project.sequence).includes(token);
+    }
+    return haystack.includes(token);
+  });
 }
 
 function clampViewBox(viewBox: MapViewBox, full: MapViewBox): MapViewBox {
@@ -223,6 +212,7 @@ function ChinaMapCanvas({
   );
   const [viewBox, setViewBox] = useState<MapViewBox>(fullViewBox);
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
+  const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
   const viewBoxRef = useRef(viewBox);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureScaleRef = useRef(1);
@@ -265,9 +255,7 @@ function ChinaMapCanvas({
     return () => observer.disconnect();
   }, []);
 
-  const points = useMemo(() => {
-    return coordinateMode === "city" ? buildCityPoints(projects, mapData) : buildProjectPoints(projects, coordinateMode, mapData);
-  }, [coordinateMode, mapData, projects]);
+  const cityPoints = useMemo(() => buildCityPoints(projects, mapData), [mapData, projects]);
 
   const selectedPoint = useMemo(() => {
     if (!selectedProject) return null;
@@ -298,7 +286,7 @@ function ChinaMapCanvas({
   const scale = fullViewBox.width / viewBox.width;
   const pxPerMapUnit = viewportSize.width / viewBox.width;
   const provinceFill = theme === "night" ? NIGHT_PROVINCE_COLORS : PROVINCE_COLORS;
-  const activeProvince = selectedProject ? normalizeProvinceName(selectedProject.province) : null;
+  const activeProvince = selectedProvince ?? (selectedProject ? normalizeProvinceName(selectedProject.province) : null);
 
   const mapToScreen = useCallback(
     (x: number, y: number): ScreenPoint => ({
@@ -404,6 +392,7 @@ function ChinaMapCanvas({
 
   useEffect(() => {
     if (!selectedPoint) return;
+    setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
     const targetWidth = coordinateMode === "city" ? 230 : 170;
     const targetHeight = targetWidth * (fullViewBox.height / fullViewBox.width);
     animateTo(
@@ -415,7 +404,7 @@ function ChinaMapCanvas({
       },
       980,
     );
-  }, [animateTo, coordinateMode, fullViewBox, selectedPoint]);
+  }, [animateTo, coordinateMode, fullViewBox, selectedPoint, selectedProject]);
 
   const zoom = useCallback(
     (factor: number) => {
@@ -470,6 +459,49 @@ function ChinaMapCanvas({
       .slice(0, 18);
   }, [coordinateMode, mapData, projects, selectedPoint, selectedProject]);
 
+  const visibleProjectsInView = useMemo(() => {
+    if (!selectedProvince && !selectedProject) return [];
+    return projects
+      .map((project) => {
+        const coord = coordFor(project, coordinateMode);
+        if (!coord) return null;
+        const point = projectCoord(coord, mapData);
+        return { project, point };
+      })
+      .filter((item): item is { project: ProjectRecord; point: ScreenPoint } => {
+        if (!item) return false;
+        const inView =
+          item.point.x >= viewBox.x &&
+          item.point.x <= viewBox.x + viewBox.width &&
+          item.point.y >= viewBox.y &&
+          item.point.y <= viewBox.y + viewBox.height;
+        return inView;
+      })
+      .sort((a, b) => a.project.id - b.project.id);
+  }, [coordinateMode, mapData, projects, selectedProject, selectedProvince, viewBox]);
+
+  const focusProvince = useCallback(
+    (provinceName: string) => {
+      setSelectedProvince(provinceName);
+      const provinceProjects = projects
+        .filter((project) => normalizeProvinceName(project.province) === provinceName)
+        .map((project) => {
+          const coord = coordFor(project, coordinateMode);
+          return coord ? projectCoord(coord, mapData) : null;
+        })
+        .filter((point): point is ScreenPoint => Boolean(point));
+      if (!provinceProjects.length) return;
+      const minX = Math.min(...provinceProjects.map((point) => point.x));
+      const maxX = Math.max(...provinceProjects.map((point) => point.x));
+      const minY = Math.min(...provinceProjects.map((point) => point.y));
+      const maxY = Math.max(...provinceProjects.map((point) => point.y));
+      const width = Math.max(160, maxX - minX + 130);
+      const height = Math.max(130, maxY - minY + 110);
+      animateTo({ x: minX - 65, y: minY - 55, width, height }, 760);
+    },
+    [animateTo, coordinateMode, mapData, projects],
+  );
+
   const overlayLabels = useMemo<MapLabel[]>(() => {
     const candidates: MapLabel[] = [];
     for (const province of mapData.provinces) {
@@ -487,9 +519,9 @@ function ChinaMapCanvas({
       }
     }
 
-    if (scale >= 1.85) {
-      const cityLimit = scale < 2.6 ? 32 : scale < 4 ? 80 : 130;
-      const cityCandidates = points
+    if (scale >= 1.75) {
+      const cityLimit = scale < 2.5 ? 34 : scale < 4 ? 80 : 140;
+      const cityCandidates = cityPoints
         .filter((point) => point.type === "city")
         .sort((a, b) => {
           const aActive = selectedProject && a.projectIds.includes(selectedProject.id) ? 1 : 0;
@@ -510,27 +542,31 @@ function ChinaMapCanvas({
       }
     }
 
-    if (selectedProject && scale >= 2.2) {
+    if ((selectedProvince || selectedProject) && scale >= 1.35) {
       const offsets = [
-        { x: 84, y: -34 },
-        { x: -84, y: -34 },
-        { x: 92, y: 34 },
-        { x: -92, y: 34 },
-        { x: 0, y: -52 },
-        { x: 0, y: 52 },
+        { x: 104, y: -38 },
+        { x: -104, y: -38 },
+        { x: 112, y: 38 },
+        { x: -112, y: 38 },
+        { x: 0, y: -58 },
+        { x: 0, y: 58 },
+        { x: 146, y: 0 },
+        { x: -146, y: 0 },
       ];
-      for (const [index, item] of nearbyProjects.entries()) {
-        const isActive = item.project.id === selectedProject.id;
+      const companyItems = selectedProvince ? visibleProjectsInView : nearbyProjects;
+      for (const [index, item] of companyItems.entries()) {
+        const isActive = selectedProject ? item.project.id === selectedProject.id : false;
+        const priorityDistance = "distance" in item && typeof item.distance === "number" ? item.distance : index;
         const offset = offsets[index % offsets.length];
         candidates.push({
           id: `company-${item.project.id}`,
           kind: "company",
-          text: item.project.company,
+          text: `${companyCode(item.project)} ${item.project.company}`,
           x: item.point.x,
           y: item.point.y,
           offsetX: isActive ? 104 : offset.x,
           offsetY: isActive ? -42 : offset.y,
-          priority: isActive ? 2000 : 900 - item.distance,
+          priority: isActive ? 2000 : 900 - priorityDistance,
           active: isActive,
           projectId: item.project.id,
         });
@@ -549,7 +585,7 @@ function ChinaMapCanvas({
       .filter(({ screen }) => screen.x > -90 && screen.y > -40 && screen.x < viewportSize.width + 90 && screen.y < viewportSize.height + 40)
       .sort((a, b) => b.label.priority - a.label.priority)
       .filter(({ label, screen }) => {
-        const width = label.kind === "company" ? Math.min(190, Math.max(88, label.text.length * 12)) : label.kind === "province" ? 52 : 46;
+        const width = label.kind === "company" ? Math.min(240, Math.max(88, label.text.length * 12)) : label.kind === "province" ? 52 : 46;
         const height = label.kind === "company" ? 32 : 24;
         const box = { x: screen.x - width / 2, y: screen.y - height / 2, width, height };
         if (!label.active && placed.some((item) => boxesOverlap(box, item))) return false;
@@ -557,7 +593,20 @@ function ChinaMapCanvas({
         return true;
       })
       .map(({ label }) => label);
-  }, [activeProvince, mapData.provinces, mapToScreen, nearbyProjects, points, provinceNames, scale, selectedPoint, selectedProject, viewportSize]);
+  }, [
+    activeProvince,
+    cityPoints,
+    mapData.provinces,
+    mapToScreen,
+    nearbyProjects,
+    provinceNames,
+    scale,
+    selectedPoint,
+    selectedProject,
+    selectedProvince,
+    viewportSize,
+    visibleProjectsInView,
+  ]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -648,6 +697,11 @@ function ChinaMapCanvas({
         onPointerCancel={onPointerUp}
       >
         <defs>
+          <linearGradient id="provinceHighlight" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#f97316" />
+            <stop offset="50%" stopColor="#facc15" />
+            <stop offset="100%" stopColor="#22d3ee" />
+          </linearGradient>
           <filter id="selectedGlow" x="-70%" y="-70%" width="240%" height="240%">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge>
@@ -664,6 +718,9 @@ function ChinaMapCanvas({
               className={`province-area ${province.name === activeProvince ? "is-active" : ""}`}
               d={province.path}
               fill={provinceFill[province.colorIndex % provinceFill.length]}
+              onClick={() => {
+                if (!gestureRef.current.moved) focusProvince(province.name);
+              }}
             />
           ))}
         </g>
@@ -677,21 +734,15 @@ function ChinaMapCanvas({
             <line key={segment.id} x1={segment.x1} y1={segment.y1} x2={segment.x2} y2={segment.y2} />
           ))}
         </g>
-        <g className="town-dots">
-          {scale >= 1.35 &&
-            mapData.cities.map((city, index) => (
-              <circle key={`${city.province}-${city.name}-town-${index}`} cx={city.x} cy={city.y} r={Math.max(0.9, 1.7 / pxPerMapUnit)} />
-            ))}
-        </g>
         <g className="province-boundaries">
           {mapData.provinces.map((province) => (
-            <path key={`${province.code}-line`} d={province.path} />
+            <path key={`${province.code}-line`} className={province.name === activeProvince ? "is-active" : ""} d={province.path} />
           ))}
         </g>
         <g className="project-points">
-          {points.map((point) => {
+          {cityPoints.map((point) => {
             const active = selectedProject ? point.projectIds.includes(selectedProject.id) : false;
-            const radiusPx = active ? 7 : coordinateMode === "city" ? Math.min(6, 2.8 + point.count * 0.3) : 3.4;
+            const radiusPx = active ? 7 : Math.min(6, 2.8 + point.count * 0.3);
             return (
               <g
                 key={point.id}
@@ -752,7 +803,14 @@ function ChinaMapCanvas({
         <button type="button" onClick={() => zoom(1.45)} aria-label="缩小地图">
           -
         </button>
-        <button type="button" onClick={() => animateTo(fullViewBox, 420)} aria-label="显示全国">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedProvince(null);
+            animateTo(fullViewBox, 420);
+          }}
+          aria-label="显示全国"
+        >
           全国
         </button>
       </div>
@@ -901,8 +959,8 @@ export default function App() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索公司、城市、地址"
-                aria-label="搜索公司、城市、地址"
+                placeholder="搜索编号、公司、城市、地址"
+                aria-label="搜索编号、公司、城市、地址"
               />
               {query && (
                 <button className="ghost-button" type="button" onClick={clearSearch}>

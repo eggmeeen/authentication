@@ -352,6 +352,7 @@ p {
   stroke: rgba(21, 94, 117, 0.55);
   stroke-width: 0.72;
   vector-effect: non-scaling-stroke;
+  cursor: pointer;
   transition:
     fill 180ms ease,
     opacity 180ms ease,
@@ -387,6 +388,16 @@ p {
   vector-effect: non-scaling-stroke;
 }
 
+.province-boundaries path.is-active {
+  stroke: url("#provinceHighlight");
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke-dasharray: 9 6;
+  filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.55));
+  animation: province-border-flow 1.8s linear infinite;
+}
+
 .theme-night .city-boundaries path {
   stroke: rgba(147, 197, 253, 0.5);
   stroke-width: 0.68;
@@ -405,22 +416,24 @@ p {
   stroke-width: 1.35;
 }
 
-.town-dots circle {
-  fill: rgba(11, 87, 102, 0.72);
-  stroke: rgba(255, 255, 255, 0.82);
-  stroke-width: 0.8;
-  vector-effect: non-scaling-stroke;
-}
-
-.theme-night .town-dots circle {
-  fill: rgba(165, 243, 252, 0.82);
-  stroke: rgba(8, 17, 30, 0.9);
-  stroke-width: 1;
-}
-
 .theme-night .province-boundaries path {
   stroke: rgba(251, 191, 36, 0.92);
   stroke-width: 1.45;
+}
+
+.theme-night .province-boundaries path.is-active {
+  stroke: url("#provinceHighlight");
+  stroke-width: 3.2;
+}
+
+@keyframes province-border-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: -30;
+  }
 }
 
 .point-hit {
@@ -494,6 +507,7 @@ p {
 }
 
 .map-label.is-company {
+  max-width: 240px;
   border: 1px solid rgba(249, 115, 22, 0.34);
   color: #44210b;
   background: rgba(255, 247, 237, 0.9);
