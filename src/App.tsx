@@ -162,6 +162,13 @@ interface ScreenPoint {
   y: number;
 }
 
+interface ScreenViewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface MapLabel {
   id: string;
   kind: "province" | "city" | "company";
@@ -191,12 +198,34 @@ interface ProjectHighlightPoint {
   selected: boolean;
 }
 
+interface ProjectConnection {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  selected: boolean;
+}
+
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function boxesOverlap(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function renderedViewport(sourceViewBox: MapViewBox, size: { width: number; height: number }): ScreenViewport {
+  const viewRatio = sourceViewBox.width / sourceViewBox.height;
+  const containerRatio = size.width / size.height;
+  if (containerRatio > viewRatio) {
+    const height = size.height;
+    const width = height * viewRatio;
+    return { x: (size.width - width) / 2, y: 0, width, height };
+  }
+  const width = size.width;
+  const height = width / viewRatio;
+  return { x: 0, y: (size.height - height) / 2, width, height };
 }
 
 function ChinaMapCanvas({
@@ -323,7 +352,8 @@ function ChinaMapCanvas({
   const currentScale = fullViewBox.width / viewBox.width;
   const labelScale = fullViewBox.width / labelViewBox.width;
   const showProvinceCounts = currentScale <= 1.18;
-  const pxPerMapUnit = viewportSize.width / viewBox.width;
+  const mapViewport = useMemo(() => renderedViewport(viewBox, viewportSize), [viewBox, viewportSize]);
+  const pxPerMapUnit = mapViewport.width / viewBox.width;
   const provinceFill = theme === "night" ? NIGHT_PROVINCE_COLORS : PROVINCE_COLORS;
   const activeProvince = selectedProvince ?? (selectedProject ? normalizeProvinceName(selectedProject.province) : null);
 
@@ -342,25 +372,31 @@ function ChinaMapCanvas({
 
   const mapToScreen = useCallback(
     (x: number, y: number): ScreenPoint => ({
-      x: ((x - viewBox.x) / viewBox.width) * viewportSize.width,
-      y: ((y - viewBox.y) / viewBox.height) * viewportSize.height,
+      x: mapViewport.x + ((x - viewBox.x) / viewBox.width) * mapViewport.width,
+      y: mapViewport.y + ((y - viewBox.y) / viewBox.height) * mapViewport.height,
     }),
-    [viewBox, viewportSize],
+    [mapViewport, viewBox],
   );
 
   const screenToMap = useCallback(
-    (x: number, y: number, sourceViewBox = viewBoxRef.current): ScreenPoint => ({
-      x: sourceViewBox.x + (x / viewportSize.width) * sourceViewBox.width,
-      y: sourceViewBox.y + (y / viewportSize.height) * sourceViewBox.height,
-    }),
+    (x: number, y: number, sourceViewBox = viewBoxRef.current): ScreenPoint => {
+      const sourceViewport = renderedViewport(sourceViewBox, viewportSize);
+      return {
+        x: sourceViewBox.x + ((x - sourceViewport.x) / sourceViewport.width) * sourceViewBox.width,
+        y: sourceViewBox.y + ((y - sourceViewport.y) / sourceViewport.height) * sourceViewBox.height,
+      };
+    },
     [viewportSize],
   );
 
   const labelMapToScreen = useCallback(
-    (x: number, y: number): ScreenPoint => ({
-      x: ((x - labelViewBox.x) / labelViewBox.width) * viewportSize.width,
-      y: ((y - labelViewBox.y) / labelViewBox.height) * viewportSize.height,
-    }),
+    (x: number, y: number): ScreenPoint => {
+      const labelViewport = renderedViewport(labelViewBox, viewportSize);
+      return {
+        x: labelViewport.x + ((x - labelViewBox.x) / labelViewBox.width) * labelViewport.width,
+        y: labelViewport.y + ((y - labelViewBox.y) / labelViewBox.height) * labelViewport.height,
+      };
+    },
     [labelViewBox, viewportSize],
   );
 
@@ -400,11 +436,14 @@ function ChinaMapCanvas({
     (factor: number, screenX: number, screenY: number, duration = 0) => {
       const current = viewBoxRef.current;
       const mapPoint = screenToMap(screenX, screenY, current);
+      const currentViewport = renderedViewport(current, viewportSize);
+      const anchorX = (screenX - currentViewport.x) / currentViewport.width;
+      const anchorY = (screenY - currentViewport.y) / currentViewport.height;
       const nextWidth = current.width * factor;
       const nextHeight = current.height * factor;
       const target = {
-        x: mapPoint.x - (screenX / viewportSize.width) * nextWidth,
-        y: mapPoint.y - (screenY / viewportSize.height) * nextHeight,
+        x: mapPoint.x - anchorX * nextWidth,
+        y: mapPoint.y - anchorY * nextHeight,
         width: nextWidth,
         height: nextHeight,
       };
@@ -458,18 +497,22 @@ function ChinaMapCanvas({
   useEffect(() => {
     if (!selectedPoint) return;
     setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
-    const targetWidth = coordinateMode === "city" ? 230 : 170;
-    const targetHeight = targetWidth * (fullViewBox.height / fullViewBox.width);
-    animateTo(
+    const targetHeight = 95;
+    const targetWidth = Math.max(115, targetHeight * (viewportSize.width / viewportSize.height));
+    const target = clampViewBox(
       {
         x: selectedPoint.x - targetWidth / 2,
         y: selectedPoint.y - targetHeight / 2,
         width: targetWidth,
         height: targetHeight,
       },
-      980,
+      fullViewBox,
     );
-  }, [animateTo, coordinateMode, fullViewBox, selectedPoint, selectedProject]);
+    clearLabelLayoutTimer();
+    viewBoxRef.current = target;
+    setViewBox(target);
+    setLabelViewBox(target);
+  }, [clearLabelLayoutTimer, fullViewBox, selectedPoint, selectedProject, viewportSize]);
 
   const zoom = useCallback(
     (factor: number) => {
@@ -529,6 +572,25 @@ function ChinaMapCanvas({
       })
       .filter((point): point is ProjectHighlightPoint => Boolean(point));
   }, [activeProvince, coordinateMode, mapData, projects, selectedProject]);
+
+  const provinceProjectConnections = useMemo<ProjectConnection[]>(() => {
+    const connections: ProjectConnection[] = [];
+    for (let index = 0; index < provinceProjectHighlights.length; index += 1) {
+      for (let nextIndex = index + 1; nextIndex < provinceProjectHighlights.length; nextIndex += 1) {
+        const a = provinceProjectHighlights[index];
+        const b = provinceProjectHighlights[nextIndex];
+        connections.push({
+          id: `${a.id}-${b.id}`,
+          x1: a.x,
+          y1: a.y,
+          x2: b.x,
+          y2: b.y,
+          selected: a.selected || b.selected,
+        });
+      }
+    }
+    return connections;
+  }, [provinceProjectHighlights]);
 
   const nearbyProjects = useMemo(() => {
     if (!selectedPoint || !selectedProject) return [];
@@ -745,11 +807,14 @@ function ChinaMapCanvas({
         const startCenter = { x: gesture.startCenter.x - rect.left, y: gesture.startCenter.y - rect.top };
         const factor = gesture.startDistance / Math.max(20, currentDistance);
         const anchor = screenToMap(startCenter.x, startCenter.y, gesture.startViewBox);
+        const startViewport = renderedViewport(gesture.startViewBox, viewportSize);
+        const centerRatioX = (center.x - startViewport.x) / startViewport.width;
+        const centerRatioY = (center.y - startViewport.y) / startViewport.height;
         const nextWidth = gesture.startViewBox.width * factor;
         const nextHeight = gesture.startViewBox.height * factor;
         setClampedViewBox({
-          x: anchor.x - (center.x / viewportSize.width) * nextWidth,
-          y: anchor.y - (center.y / viewportSize.height) * nextHeight,
+          x: anchor.x - centerRatioX * nextWidth,
+          y: anchor.y - centerRatioY * nextHeight,
           width: nextWidth,
           height: nextHeight,
         });
@@ -758,10 +823,11 @@ function ChinaMapCanvas({
         const dx = event.clientX - gesture.startX;
         const dy = event.clientY - gesture.startY;
         if (Math.hypot(dx, dy) > 3) gesture.moved = true;
+        const startViewport = renderedViewport(gesture.startViewBox, viewportSize);
         setClampedViewBox({
           ...gesture.startViewBox,
-          x: gesture.startViewBox.x - (dx / viewportSize.width) * gesture.startViewBox.width,
-          y: gesture.startViewBox.y - (dy / viewportSize.height) * gesture.startViewBox.height,
+          x: gesture.startViewBox.x - (dx / startViewport.width) * gesture.startViewBox.width,
+          y: gesture.startViewBox.y - (dy / startViewport.height) * gesture.startViewBox.height,
         });
       }
     },
@@ -784,7 +850,6 @@ function ChinaMapCanvas({
       <svg
         className="china-map"
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-        preserveAspectRatio="none"
         role="img"
         aria-label="中国认证项目分布线框图"
         onPointerDown={onPointerDown}
@@ -869,13 +934,39 @@ function ChinaMapCanvas({
             />
           ))}
         </g>
+        {provinceProjectConnections.length > 0 && (
+          <g className="province-project-links" aria-hidden="true">
+            {provinceProjectConnections.map((connection) => (
+              <line
+                key={connection.id}
+                className={connection.selected ? "is-selected" : ""}
+                x1={connection.x1}
+                y1={connection.y1}
+                x2={connection.x2}
+                y2={connection.y2}
+              />
+            ))}
+          </g>
+        )}
         {provinceProjectHighlights.length > 0 && (
-          <g className="province-project-highlights" aria-hidden="true">
+          <g className="province-project-highlights">
             {provinceProjectHighlights.map((point) => {
               const ringRadius = (point.selected ? 12 : 8) / pxPerMapUnit;
               const coreRadius = (point.selected ? 4.2 : 2.8) / pxPerMapUnit;
               return (
-                <g key={`province-project-${point.id}`} className={point.selected ? "is-selected" : ""}>
+                <g
+                  key={`province-project-${point.id}`}
+                  className={`province-project-point ${point.selected ? "is-selected" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`定位项目 ${companyCode(projects.find((project) => project.id === point.id) ?? selectedProject ?? projects[0])}`}
+                  onClick={() => {
+                    if (!gestureRef.current.moved) onSelectProject(point.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") onSelectProject(point.id);
+                  }}
+                >
                   <circle className="province-project-ring" cx={point.x} cy={point.y} r={ringRadius} />
                   <circle className="province-project-core" cx={point.x} cy={point.y} r={coreRadius} />
                 </g>
