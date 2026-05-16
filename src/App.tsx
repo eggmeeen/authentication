@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Building2, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Moon, Search, Sun } from "lucide-react";
+import { Building2, ChevronUp, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Moon, Search, Sun } from "lucide-react";
 import type { ChinaMapDataset, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
 
 const PROVINCE_COLORS = [
@@ -1232,6 +1232,7 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isMobileLayout, setIsMobileLayout] = useState(() => window.innerWidth <= 780);
+  const [mobileDrawerExpanded, setMobileDrawerExpanded] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -1255,7 +1256,10 @@ export default function App() {
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 780px)");
-    const sync = (matches: boolean) => setIsMobileLayout(matches);
+    const sync = (matches: boolean) => {
+      setIsMobileLayout(matches);
+      if (!matches) setMobileDrawerExpanded(false);
+    };
     sync(media.matches);
     const handleChange = (event: MediaQueryListEvent) => sync(event.matches);
     media.addEventListener("change", handleChange);
@@ -1284,6 +1288,7 @@ export default function App() {
 
   const onSelectProject = useCallback((projectId: number) => {
     setSelectedProjectId(projectId);
+    if (window.innerWidth <= 780) setMobileDrawerExpanded(false);
   }, []);
 
   const clearSearch = useCallback(() => {
@@ -1356,7 +1361,7 @@ export default function App() {
         </button>
       </header>
 
-      <section className={`workspace ${isMobileLayout ? "is-mobile" : ""}`}>
+      <section className={`workspace ${isMobileLayout ? "is-mobile" : ""} ${mobileDrawerExpanded ? "drawer-expanded" : "drawer-collapsed"}`}>
         <section className="visual-pane is-active">
           <div className="toolbar">
             <div className="search-box">
@@ -1419,9 +1424,22 @@ export default function App() {
               </span>
               <h2>{visibleProjects.length} 条记录</h2>
             </div>
-            <div className="db-badge">
-              <Database size={14} />
-              本地数据
+            <div className="panel-head-actions">
+              {isMobileLayout && (
+                <button
+                  className={`drawer-toggle ${mobileDrawerExpanded ? "is-expanded" : ""}`}
+                  type="button"
+                  onClick={() => setMobileDrawerExpanded((current) => !current)}
+                  aria-label={mobileDrawerExpanded ? "收起公司抽屉" : "展开公司抽屉"}
+                >
+                  <ChevronUp size={15} />
+                  {mobileDrawerExpanded ? "收起" : "展开"}
+                </button>
+              )}
+              <div className="db-badge">
+                <Database size={14} />
+                本地数据
+              </div>
             </div>
           </div>
 

@@ -946,6 +946,12 @@ p {
   border-color: rgba(255, 255, 255, 0.08);
 }
 
+.panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .eyebrow {
   display: inline-flex;
   align-items: center;
@@ -978,6 +984,34 @@ p {
   color: #596971;
   background: #edf2ef;
   font-size: 12px;
+}
+
+.drawer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(21, 94, 117, 0.16);
+  border-radius: 999px;
+  color: #155e75;
+  background: rgba(14, 116, 144, 0.08);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.drawer-toggle svg {
+  transition: transform 180ms ease;
+}
+
+.drawer-toggle.is-expanded svg {
+  transform: rotate(180deg);
+}
+
+.theme-night .drawer-toggle {
+  color: #c7f9ff;
+  border-color: rgba(103, 232, 249, 0.22);
+  background: rgba(8, 145, 178, 0.16);
 }
 
 .theme-night .db-badge {
@@ -1167,9 +1201,63 @@ p {
     padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
   }
 
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 10px;
+    align-items: start;
+    margin-bottom: 10px;
+  }
+
+  .brand {
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+  }
+
+  .brand h1 {
+    font-size: 19px;
+  }
+
+  .brand p {
+    display: none;
+  }
+
+  .stat-strip {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .stat-strip div {
+    padding: 7px 8px;
+    box-shadow: 0 8px 18px rgba(19, 32, 37, 0.06);
+  }
+
+  .stat-strip strong {
+    font-size: 16px;
+  }
+
+  .stat-strip span {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+
+  .theme-toggle {
+    height: 38px;
+    min-width: 68px;
+    padding: 0 10px;
+    align-self: start;
+  }
+
   .toolbar {
     grid-template-columns: 1fr;
     padding: 10px;
+    gap: 8px;
   }
 
   .segmented {
@@ -1190,10 +1278,15 @@ p {
   }
 
   .workspace.is-mobile {
+    --mobile-drawer-height: 172px;
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr);
     gap: 0;
     position: relative;
+  }
+
+  .workspace.is-mobile.drawer-expanded {
+    --mobile-drawer-height: min(46dvh, 420px);
   }
 
   .workspace.is-mobile .visual-pane {
@@ -1214,7 +1307,7 @@ p {
     right: 0;
     bottom: 0;
     z-index: 22;
-    height: min(42dvh, 380px);
+    height: var(--mobile-drawer-height);
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     border-radius: 18px 18px 0 0;
     box-shadow: 0 -18px 40px rgba(19, 32, 37, 0.18);
@@ -1222,7 +1315,7 @@ p {
 
   .workspace.is-mobile .stage {
     min-height: 0;
-    padding-bottom: min(42dvh, 380px);
+    padding-bottom: calc(var(--mobile-drawer-height) + 8px);
   }
 
   .workspace.is-mobile .side-panel.is-active::before {
@@ -1255,7 +1348,7 @@ p {
 
   .map-controls {
     right: 10px;
-    bottom: calc(min(42dvh, 380px) + 10px);
+    bottom: calc(var(--mobile-drawer-height) + 10px);
   }
 
   .map-controls button {
@@ -1264,7 +1357,7 @@ p {
   }
 
   .workspace.is-mobile .focus-card {
-    bottom: calc(min(42dvh, 380px) + 10px);
+    bottom: calc(var(--mobile-drawer-height) + 10px);
     left: 10px;
     right: 68px;
     width: auto;
@@ -1277,26 +1370,23 @@ p {
 }
 
 @media (max-width: 520px) {
-  .topbar {
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-
   .brand-mark {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
   }
 
   .brand h1 {
-    font-size: 21px;
-  }
-
-  .brand p {
-    font-size: 12px;
+    font-size: 17px;
   }
 
   .panel-head {
     flex-direction: column;
+    gap: 8px;
+  }
+
+  .panel-head-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .panel-head,
@@ -1311,8 +1401,12 @@ p {
   }
 
   .project-row {
-    padding: 12px;
+    padding: 10px 11px;
     margin-bottom: 8px;
+  }
+
+  .row-address {
+    -webkit-line-clamp: 1;
   }
 
   .focus-card strong {
@@ -1323,20 +1417,23 @@ p {
     font-size: 12px;
   }
 
-  .workspace.is-mobile .side-panel.is-active {
-    height: min(46dvh, 420px);
+  .workspace.is-mobile {
+    --mobile-drawer-height: 156px;
   }
 
-  .workspace.is-mobile .stage {
-    padding-bottom: min(46dvh, 420px);
-  }
-
-  .workspace.is-mobile .map-controls {
-    bottom: calc(min(46dvh, 420px) + 10px);
+  .workspace.is-mobile.drawer-expanded {
+    --mobile-drawer-height: min(50dvh, 430px);
   }
 
   .workspace.is-mobile .focus-card {
     right: 58px;
-    bottom: calc(min(46dvh, 420px) + 10px);
+  }
+
+  .workspace.is-mobile .selection-summary {
+    top: 86px;
+  }
+
+  .stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
