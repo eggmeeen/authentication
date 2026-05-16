@@ -1123,7 +1123,9 @@ function ChinaMapCanvas({
         )}
         <g className="project-points">
           {cityPoints.map((point) => {
-            const active = selectedProject ? point.projectIds.includes(selectedProject.id) : false;
+            const belongsToSelectedProject = selectedProject ? point.projectIds.includes(selectedProject.id) : false;
+            if (belongsToSelectedProject) return null;
+            const active = false;
             const radiusPx = active ? 7 : Math.min(6, 2.8 + point.count * 0.3);
             return (
               <g
