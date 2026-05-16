@@ -169,6 +169,13 @@ interface ScreenViewport {
   height: number;
 }
 
+interface BoundsBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 interface MapLabel {
   id: string;
   kind: "province" | "city" | "company";
@@ -204,7 +211,7 @@ interface ProjectConnection {
   y1: number;
   x2: number;
   y2: number;
-  selected: boolean;
+  kind: "same-province" | "adjacent-province";
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
@@ -213,6 +220,35 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
 
 function boxesOverlap(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function pathBounds(path: string): BoundsBox | null {
+  const values = path.match(/-?\d+(?:\.\d+)?/g);
+  if (!values || values.length < 2) return null;
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < values.length - 1; index += 2) {
+    const x = Number(values[index]);
+    const y = Number(values[index + 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
+  return { minX, minY, maxX, maxY };
+}
+
+function boundsTouch(a: BoundsBox, b: BoundsBox, padding = 12): boolean {
+  return !(
+    a.maxX + padding < b.minX ||
+    b.maxX + padding < a.minX ||
+    a.maxY + padding < b.minY ||
+    b.maxY + padding < a.minY
+  );
 }
 
 function renderedViewport(sourceViewBox: MapViewBox, size: { width: number; height: number }): ScreenViewport {
@@ -597,6 +633,43 @@ function ChinaMapCanvas({
     return Array.from(segments.values());
   }, [mapData.cities, projectCityNames]);
 
+  const provinceNeighbors = useMemo(() => {
+    const projectProvinceSet = new Set(projects.map((project) => normalizeProvinceName(project.province)));
+    const provinceEntries = mapData.provinces
+      .filter((province) => projectProvinceSet.has(province.name))
+      .map((province) => ({
+        name: province.name,
+        label: province.label,
+        bounds: pathBounds(province.path),
+      }))
+      .filter((province): province is { name: string; label: { x: number; y: number }; bounds: BoundsBox } => Boolean(province.bounds));
+
+    const neighbors = new Map<string, Array<{ name: string; distance: number }>>();
+    for (const province of provinceEntries) {
+      neighbors.set(province.name, []);
+    }
+
+    for (let index = 0; index < provinceEntries.length; index += 1) {
+      for (let nextIndex = index + 1; nextIndex < provinceEntries.length; nextIndex += 1) {
+        const a = provinceEntries[index];
+        const b = provinceEntries[nextIndex];
+        const labelDistance = distance(a.label, b.label);
+        if (!boundsTouch(a.bounds, b.bounds, 16) || labelDistance > 320) continue;
+        neighbors.get(a.name)?.push({ name: b.name, distance: labelDistance });
+        neighbors.get(b.name)?.push({ name: a.name, distance: labelDistance });
+      }
+    }
+
+    return new Map(
+      Array.from(neighbors.entries()).map(([name, items]) => [
+        name,
+        items
+          .sort((a, b) => a.distance - b.distance)
+          .map((item) => item.name),
+      ]),
+    );
+  }, [mapData.provinces, projects]);
+
   const provinceProjectHighlights = useMemo<ProjectHighlightPoint[]>(() => {
     if (!activeProvince) return [];
     return projects
@@ -615,23 +688,53 @@ function ChinaMapCanvas({
   }, [activeProvince, projectDisplayPoints, projects, selectedProject]);
 
   const provinceProjectConnections = useMemo<ProjectConnection[]>(() => {
+    if (!selectedProject || !selectedPoint) return [];
+
     const connections: ProjectConnection[] = [];
-    for (let index = 0; index < provinceProjectHighlights.length; index += 1) {
-      for (let nextIndex = index + 1; nextIndex < provinceProjectHighlights.length; nextIndex += 1) {
-        const a = provinceProjectHighlights[index];
-        const b = provinceProjectHighlights[nextIndex];
-        connections.push({
-          id: `${a.id}-${b.id}`,
-          x1: a.x,
-          y1: a.y,
-          x2: b.x,
-          y2: b.y,
-          selected: a.selected || b.selected,
-        });
-      }
+    const selectedProvinceName = normalizeProvinceName(selectedProject.province);
+
+    for (const point of provinceProjectHighlights) {
+      if (point.id === selectedProject.id) continue;
+      connections.push({
+        id: `province-${selectedProject.id}-${point.id}`,
+        x1: selectedPoint.x,
+        y1: selectedPoint.y,
+        x2: point.x,
+        y2: point.y,
+        kind: "same-province",
+      });
     }
+
+    const adjacentCandidates = (provinceNeighbors.get(selectedProvinceName) ?? [])
+      .map((provinceName) => {
+        const nearest = projects
+          .filter((project) => normalizeProvinceName(project.province) === provinceName)
+          .map((project) => {
+            const point = projectDisplayPoints.get(project.id);
+            if (!point) return null;
+            return { projectId: project.id, point, distance: distance(point, selectedPoint) };
+          })
+          .filter((item): item is { projectId: number; point: ScreenPoint; distance: number } => Boolean(item))
+          .sort((a, b) => a.distance - b.distance)[0];
+        if (!nearest) return null;
+        return {
+          id: `adjacent-${selectedProject.id}-${nearest.projectId}`,
+          x1: selectedPoint.x,
+          y1: selectedPoint.y,
+          x2: nearest.point.x,
+          y2: nearest.point.y,
+          kind: "adjacent-province" as const,
+          distance: nearest.distance,
+        };
+      })
+      .filter((item): item is { id: string; x1: number; y1: number; x2: number; y2: number; kind: "adjacent-province"; distance: number } => Boolean(item))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 6)
+      .map(({ distance: _distance, ...connection }) => connection);
+
+    connections.push(...adjacentCandidates);
     return connections;
-  }, [provinceProjectHighlights]);
+  }, [projectDisplayPoints, projects, provinceNeighbors, provinceProjectHighlights, selectedPoint, selectedProject]);
 
   const nearbyProjects = useMemo(() => {
     if (!selectedPoint || !selectedProject) return [];
@@ -768,7 +871,21 @@ function ChinaMapCanvas({
       }
     }
 
-    const placed: Array<{ x: number; y: number; width: number; height: number }> = [];
+    const reservedBoxes: Array<{ x: number; y: number; width: number; height: number }> = [];
+    if (selectedProject) {
+      const compact = viewportSize.width <= 520;
+      const focusCardWidth = compact ? Math.max(180, viewportSize.width - 20) : Math.min(430, Math.max(220, viewportSize.width - 36));
+      const focusCardHeight = compact ? 134 : 136;
+      const focusCardLeft = compact ? 10 : 18;
+      const focusCardBottom = compact ? 10 : 18;
+      reservedBoxes.push({
+        x: focusCardLeft,
+        y: viewportSize.height - focusCardBottom - focusCardHeight,
+        width: focusCardWidth,
+        height: focusCardHeight,
+      });
+    }
+    const placed: Array<{ x: number; y: number; width: number; height: number }> = [...reservedBoxes];
     return candidates
       .map((label) => {
         const base = labelMapToScreen(label.x, label.y);
@@ -780,6 +897,7 @@ function ChinaMapCanvas({
         const width = label.kind === "company" ? Math.min(240, Math.max(88, label.text.length * 12)) : label.kind === "province" ? 52 : 46;
         const height = label.kind === "company" ? 32 : 24;
         const box = { x: screen.x - width / 2, y: screen.y - height / 2, width, height };
+        if (reservedBoxes.some((item) => boxesOverlap(box, item))) return false;
         const forceKeep = label.active && (label.kind === "company" || label.kind === "city");
         if (placed.some((item) => boxesOverlap(box, item)) && !forceKeep) return false;
         placed.push(box);
@@ -965,7 +1083,7 @@ function ChinaMapCanvas({
             {provinceProjectConnections.map((connection) => (
               <line
                 key={connection.id}
-                className={connection.selected ? "is-selected" : ""}
+                className={connection.kind === "adjacent-province" ? "is-adjacent" : "is-same-province"}
                 x1={connection.x1}
                 y1={connection.y1}
                 x2={connection.x2}

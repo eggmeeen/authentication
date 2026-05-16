@@ -555,19 +555,26 @@ p {
 }
 
 .province-project-links line {
-  stroke: rgba(249, 115, 22, 0.58);
-  stroke-width: 1.4;
+  stroke: rgba(249, 115, 22, 0.72);
+  stroke-width: 1.55;
   stroke-linecap: round;
-  stroke-dasharray: 5 7;
+  stroke-dasharray: 6 8;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.28));
-  animation: province-link-flow 1.5s linear infinite;
+  filter: drop-shadow(0 0 5px rgba(249, 115, 22, 0.36));
+  animation: province-link-flow 1.9s linear infinite;
 }
 
-.province-project-links line.is-selected {
-  stroke: rgba(234, 88, 12, 0.95);
-  stroke-width: 2.2;
-  filter: drop-shadow(0 0 7px rgba(249, 115, 22, 0.72));
+.province-project-links line.is-same-province {
+  stroke: rgba(234, 88, 12, 0.92);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 7px rgba(249, 115, 22, 0.58));
+}
+
+.province-project-links line.is-adjacent {
+  stroke: rgba(14, 165, 233, 0.56);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 8;
+  filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.32));
 }
 
 .province-project-point {
@@ -623,13 +630,18 @@ p {
 }
 
 .theme-night .province-project-links line {
-  stroke: rgba(34, 211, 238, 0.62);
-  filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.4));
+  stroke: rgba(251, 191, 36, 0.68);
+  filter: drop-shadow(0 0 5px rgba(251, 191, 36, 0.38));
 }
 
-.theme-night .province-project-links line.is-selected {
-  stroke: rgba(251, 191, 36, 0.96);
-  filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.74));
+.theme-night .province-project-links line.is-same-province {
+  stroke: rgba(251, 191, 36, 0.94);
+  filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.68));
+}
+
+.theme-night .province-project-links line.is-adjacent {
+  stroke: rgba(103, 232, 249, 0.62);
+  filter: drop-shadow(0 0 5px rgba(103, 232, 249, 0.38));
 }
 
 @keyframes province-link-flow {
@@ -860,6 +872,7 @@ p {
   position: absolute;
   left: 18px;
   bottom: 18px;
+  z-index: 18;
   width: min(430px, calc(100% - 36px));
   padding: 14px 16px;
   border: 1px solid rgba(19, 32, 37, 0.12);
