@@ -29,6 +29,9 @@ const NIGHT_PROVINCE_COLORS = [
   "#443b17",
 ];
 
+const MIN_VIEWBOX_WIDTH = 88;
+const MIN_VIEWBOX_HEIGHT = 72;
+
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "");
 }
@@ -127,8 +130,8 @@ function projectMatches(project: ProjectRecord, query: string): boolean {
 }
 
 function clampViewBox(viewBox: MapViewBox, full: MapViewBox): MapViewBox {
-  const width = Math.min(full.width, Math.max(115, viewBox.width));
-  const height = Math.min(full.height, Math.max(95, viewBox.height));
+  const width = Math.min(full.width, Math.max(MIN_VIEWBOX_WIDTH, viewBox.width));
+  const height = Math.min(full.height, Math.max(MIN_VIEWBOX_HEIGHT, viewBox.height));
   return {
     x: Math.max(full.x, Math.min(full.x + full.width - width, viewBox.x)),
     y: Math.max(full.y, Math.min(full.y + full.height - height, viewBox.y)),
@@ -569,8 +572,8 @@ function ChinaMapCanvas({
       return;
     }
     setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
-    const targetHeight = 95;
-    const targetWidth = Math.max(115, targetHeight * (viewportSize.width / viewportSize.height));
+    const targetHeight = MIN_VIEWBOX_HEIGHT;
+    const targetWidth = Math.max(MIN_VIEWBOX_WIDTH, targetHeight * (viewportSize.width / viewportSize.height));
     const target = clampViewBox(
       {
         x: selectedPoint.x - targetWidth / 2,
