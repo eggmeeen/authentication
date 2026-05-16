@@ -171,6 +171,7 @@ interface MapLabel {
   offsetY?: number;
   priority: number;
   projectId?: number;
+  provinceName?: string;
   active?: boolean;
 }
 
@@ -211,6 +212,7 @@ function ChinaMapCanvas({
     [mapData],
   );
   const [viewBox, setViewBox] = useState<MapViewBox>(fullViewBox);
+  const [labelViewBox, setLabelViewBox] = useState<MapViewBox>(fullViewBox);
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
   const viewBoxRef = useRef(viewBox);
@@ -240,7 +242,13 @@ function ChinaMapCanvas({
 
   useEffect(() => {
     setViewBox(fullViewBox);
+    setLabelViewBox(fullViewBox);
   }, [fullViewBox]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLabelViewBox(viewBox), 260);
+    return () => window.clearTimeout(timer);
+  }, [viewBox]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -283,7 +291,7 @@ function ChinaMapCanvas({
     return names;
   }, [projects]);
 
-  const scale = fullViewBox.width / viewBox.width;
+  const labelScale = fullViewBox.width / labelViewBox.width;
   const pxPerMapUnit = viewportSize.width / viewBox.width;
   const provinceFill = theme === "night" ? NIGHT_PROVINCE_COLORS : PROVINCE_COLORS;
   const activeProvince = selectedProvince ?? (selectedProject ? normalizeProvinceName(selectedProject.province) : null);
@@ -304,6 +312,14 @@ function ChinaMapCanvas({
     [viewportSize],
   );
 
+  const labelMapToScreen = useCallback(
+    (x: number, y: number): ScreenPoint => ({
+      x: ((x - labelViewBox.x) / labelViewBox.width) * viewportSize.width,
+      y: ((y - labelViewBox.y) / labelViewBox.height) * viewportSize.height,
+    }),
+    [labelViewBox, viewportSize],
+  );
+
   const animateTo = useCallback(
     (target: MapViewBox, duration = 780) => {
       const from = viewBoxRef.current;
@@ -315,7 +331,11 @@ function ChinaMapCanvas({
         const next = interpolateViewBox(from, to, eased);
         viewBoxRef.current = next;
         setViewBox(next);
-        if (progress < 1) requestAnimationFrame(frame);
+        if (progress < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          setLabelViewBox(to);
+        }
       };
       requestAnimationFrame(frame);
     },
@@ -471,14 +491,14 @@ function ChinaMapCanvas({
       .filter((item): item is { project: ProjectRecord; point: ScreenPoint } => {
         if (!item) return false;
         const inView =
-          item.point.x >= viewBox.x &&
-          item.point.x <= viewBox.x + viewBox.width &&
-          item.point.y >= viewBox.y &&
-          item.point.y <= viewBox.y + viewBox.height;
+          item.point.x >= labelViewBox.x &&
+          item.point.x <= labelViewBox.x + labelViewBox.width &&
+          item.point.y >= labelViewBox.y &&
+          item.point.y <= labelViewBox.y + labelViewBox.height;
         return inView;
       })
       .sort((a, b) => a.project.id - b.project.id);
-  }, [coordinateMode, mapData, projects, selectedProject, selectedProvince, viewBox]);
+  }, [coordinateMode, labelViewBox, mapData, projects, selectedProject, selectedProvince]);
 
   const focusProvince = useCallback(
     (provinceName: string) => {
@@ -506,7 +526,7 @@ function ChinaMapCanvas({
     const candidates: MapLabel[] = [];
     for (const province of mapData.provinces) {
       if (!provinceNames.has(province.name)) continue;
-      if (scale < 1.85 || province.name === activeProvince) {
+      if (labelScale < 1.85 || province.name === activeProvince) {
         candidates.push({
           id: `province-${province.code}`,
           kind: "province",
@@ -514,13 +534,14 @@ function ChinaMapCanvas({
           x: province.label.x,
           y: province.label.y,
           priority: province.name === activeProvince ? 1000 : 600 + (provinceNames.get(province.name) ?? 0),
+          provinceName: province.name,
           active: province.name === activeProvince,
         });
       }
     }
 
-    if (scale >= 1.75) {
-      const cityLimit = scale < 2.5 ? 34 : scale < 4 ? 80 : 140;
+    if (labelScale >= 1.75) {
+      const cityLimit = labelScale < 2.5 ? 34 : labelScale < 4 ? 80 : 140;
       const cityCandidates = cityPoints
         .filter((point) => point.type === "city")
         .sort((a, b) => {
@@ -536,13 +557,14 @@ function ChinaMapCanvas({
           text: point.label,
           x: point.lng,
           y: point.lat,
+          offsetY: selectedProject && point.projectIds.includes(selectedProject.id) ? -54 : -18,
           priority: 360 + point.count,
           active: selectedProject ? point.projectIds.includes(selectedProject.id) : false,
         });
       }
     }
 
-    if ((selectedProvince || selectedProject) && scale >= 1.35) {
+    if ((selectedProvince || selectedProject) && labelScale >= 1.35) {
       const offsets = [
         { x: 104, y: -38 },
         { x: -104, y: -38 },
@@ -573,13 +595,13 @@ function ChinaMapCanvas({
       }
     }
 
-    const targetScreen = selectedPoint ? mapToScreen(selectedPoint.x, selectedPoint.y) : null;
+    const targetScreen = selectedPoint ? labelMapToScreen(selectedPoint.x, selectedPoint.y) : null;
     const placed: Array<{ x: number; y: number; width: number; height: number }> = targetScreen
       ? [{ x: targetScreen.x - 34, y: targetScreen.y - 34, width: 68, height: 68 }]
       : [];
     return candidates
       .map((label) => {
-        const base = mapToScreen(label.x, label.y);
+        const base = labelMapToScreen(label.x, label.y);
         return { label, screen: { x: base.x + (label.offsetX ?? 0), y: base.y + (label.offsetY ?? 0) } };
       })
       .filter(({ screen }) => screen.x > -90 && screen.y > -40 && screen.x < viewportSize.width + 90 && screen.y < viewportSize.height + 40)
@@ -588,7 +610,7 @@ function ChinaMapCanvas({
         const width = label.kind === "company" ? Math.min(240, Math.max(88, label.text.length * 12)) : label.kind === "province" ? 52 : 46;
         const height = label.kind === "company" ? 32 : 24;
         const box = { x: screen.x - width / 2, y: screen.y - height / 2, width, height };
-        if (!label.active && placed.some((item) => boxesOverlap(box, item))) return false;
+        if (placed.some((item) => boxesOverlap(box, item)) && !(label.active && label.kind === "company")) return false;
         placed.push(box);
         return true;
       })
@@ -596,11 +618,11 @@ function ChinaMapCanvas({
   }, [
     activeProvince,
     cityPoints,
+    labelMapToScreen,
+    labelScale,
     mapData.provinces,
-    mapToScreen,
     nearbyProjects,
     provinceNames,
-    scale,
     selectedPoint,
     selectedProject,
     selectedProvince,
@@ -724,6 +746,19 @@ function ChinaMapCanvas({
             />
           ))}
         </g>
+        {activeProvince && (
+          <g className="province-glow" aria-hidden="true">
+            {mapData.provinces
+              .filter((province) => province.name === activeProvince)
+              .map((province) => (
+                <g key={`${province.code}-glow`}>
+                  <path className="province-glow-ring ring-one" d={province.path} />
+                  <path className="province-glow-ring ring-two" d={province.path} />
+                  <path className="province-glow-core" d={province.path} />
+                </g>
+              ))}
+          </g>
+        )}
         <g className="city-boundaries">
           {mapData.cityPaths.map((city, index) => (
             <path key={`${city.province}-${city.name}-${index}`} d={city.path} />
@@ -737,6 +772,17 @@ function ChinaMapCanvas({
         <g className="province-boundaries">
           {mapData.provinces.map((province) => (
             <path key={`${province.code}-line`} className={province.name === activeProvince ? "is-active" : ""} d={province.path} />
+          ))}
+        </g>
+        <g className="province-hit-areas">
+          {mapData.provinces.map((province) => (
+            <path
+              key={`${province.code}-hit`}
+              d={province.path}
+              onClick={() => {
+                if (!gestureRef.current.moved) focusProvince(province.name);
+              }}
+            />
           ))}
         </g>
         <g className="project-points">
@@ -774,7 +820,10 @@ function ChinaMapCanvas({
               className={`map-label is-${label.kind} ${label.active ? "is-active" : ""}`}
               type="button"
               style={{ transform: `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)` }}
-              onClick={() => label.projectId && onSelectProject(label.projectId)}
+              onClick={() => {
+                if (label.projectId) onSelectProject(label.projectId);
+                if (label.provinceName) focusProvince(label.provinceName);
+              }}
               tabIndex={-1}
             >
               {label.text}

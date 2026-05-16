@@ -360,9 +360,9 @@ p {
 }
 
 .province-area.is-active {
-  stroke: #ea580c;
-  stroke-width: 2.2;
-  filter: drop-shadow(0 0 7px rgba(249, 115, 22, 0.48));
+  stroke: rgba(249, 115, 22, 0.92);
+  stroke-width: 1.7;
+  filter: drop-shadow(0 0 7px rgba(249, 115, 22, 0.34));
 }
 
 .theme-night .province-area {
@@ -370,8 +370,8 @@ p {
 }
 
 .theme-night .province-area.is-active {
-  stroke: #fb923c;
-  filter: drop-shadow(0 0 9px rgba(251, 146, 60, 0.72));
+  stroke: rgba(251, 191, 36, 0.95);
+  filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.55));
 }
 
 .city-boundaries path {
@@ -379,6 +379,7 @@ p {
   stroke: rgba(23, 78, 99, 0.36);
   stroke-width: 0.52;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .province-boundaries path {
@@ -386,16 +387,58 @@ p {
   stroke: rgba(7, 89, 133, 0.82);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .province-boundaries path.is-active {
-  stroke: url("#provinceHighlight");
-  stroke-width: 3;
+  stroke: rgba(249, 115, 22, 0.95);
+  stroke-width: 2.4;
   stroke-linejoin: round;
   stroke-linecap: round;
-  stroke-dasharray: 9 6;
-  filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.55));
-  animation: province-border-flow 1.8s linear infinite;
+  filter: drop-shadow(0 0 9px rgba(249, 115, 22, 0.7));
+  animation: province-border-breathe 2.2s ease-in-out infinite;
+}
+
+.province-glow,
+.province-glow path {
+  pointer-events: none;
+}
+
+.province-glow path {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.province-glow-ring {
+  stroke: #f97316;
+  stroke-width: 3.8;
+  opacity: 0;
+  filter: drop-shadow(0 0 11px rgba(249, 115, 22, 0.78));
+  animation: province-glow-out 2.4s ease-out infinite;
+}
+
+.province-glow-ring.ring-two {
+  stroke: #facc15;
+  animation-delay: 1.15s;
+}
+
+.province-glow-core {
+  stroke: url("#provinceHighlight");
+  stroke-width: 2.2;
+  opacity: 0.96;
+  filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.72));
+  animation: province-core-breathe 1.55s ease-in-out infinite;
+}
+
+.province-hit-areas path {
+  fill: rgba(255, 255, 255, 0);
+  stroke: none;
+  cursor: pointer;
+  pointer-events: fill;
 }
 
 .theme-night .city-boundaries path {
@@ -409,6 +452,7 @@ p {
   stroke-linecap: round;
   stroke-dasharray: 3 4;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .theme-night .road-lines line {
@@ -422,17 +466,52 @@ p {
 }
 
 .theme-night .province-boundaries path.is-active {
-  stroke: url("#provinceHighlight");
-  stroke-width: 3.2;
+  stroke: rgba(250, 204, 21, 0.98);
+  stroke-width: 2.7;
 }
 
-@keyframes province-border-flow {
-  from {
-    stroke-dashoffset: 0;
+.theme-night .province-glow-ring {
+  stroke: #fbbf24;
+  filter: drop-shadow(0 0 14px rgba(251, 191, 36, 0.84));
+}
+
+.theme-night .province-glow-ring.ring-two {
+  stroke: #22d3ee;
+}
+
+.theme-night .province-glow-core {
+  filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.68));
+}
+
+@keyframes province-border-breathe {
+  50% {
+    opacity: 0.62;
+    stroke-width: 3;
+  }
+}
+
+@keyframes province-core-breathe {
+  50% {
+    opacity: 0.42;
+    stroke-width: 3.3;
+  }
+}
+
+@keyframes province-glow-out {
+  0% {
+    opacity: 0;
+    stroke-width: 1.4;
+    transform: scale(1);
   }
 
-  to {
-    stroke-dashoffset: -30;
+  18% {
+    opacity: 0.78;
+  }
+
+  100% {
+    opacity: 0;
+    stroke-width: 10;
+    transform: scale(1.045);
   }
 }
 
@@ -470,6 +549,7 @@ p {
 .map-label-layer {
   position: absolute;
   inset: 0;
+  z-index: 10;
   pointer-events: none;
 }
 
@@ -561,7 +641,7 @@ p {
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 8;
+  z-index: 7;
   width: 22px;
   height: 22px;
   pointer-events: none;
