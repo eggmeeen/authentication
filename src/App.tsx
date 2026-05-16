@@ -256,6 +256,8 @@ function ChinaMapCanvas({
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureScaleRef = useRef(1);
   const labelLayoutTimerRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const focusedProjectIdRef = useRef<number | null>(null);
   const gestureRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startX: number;
@@ -323,12 +325,31 @@ function ChinaMapCanvas({
 
   const cityPoints = useMemo(() => buildCityPoints(projects, mapData), [mapData, projects]);
 
+  const projectDisplayPoints = useMemo(() => {
+    const seen = new Map<string, number>();
+    const points = new Map<number, ScreenPoint>();
+    for (const project of projects) {
+      const coord = coordFor(project, coordinateMode);
+      if (!coord) continue;
+      const projected = projectCoord(coord, mapData);
+      const province = normalizeProvinceName(project.province);
+      const coordKey = `${province}|${projected.x.toFixed(2)}|${projected.y.toFixed(2)}`;
+      const index = seen.get(coordKey) ?? 0;
+      seen.set(coordKey, index + 1);
+      const angle = ((project.id * 137.508 + index * 29) % 360) * (Math.PI / 180);
+      const offsetRadius = Math.min(9, index * (coordinateMode === "address" ? 2.2 : 1.55));
+      points.set(project.id, {
+        x: projected.x + Math.cos(angle) * offsetRadius,
+        y: projected.y + Math.sin(angle) * offsetRadius,
+      });
+    }
+    return points;
+  }, [coordinateMode, mapData, projects]);
+
   const selectedPoint = useMemo(() => {
     if (!selectedProject) return null;
-    const coord = coordFor(selectedProject, coordinateMode);
-    if (!coord) return null;
-    return projectCoord(coord, mapData);
-  }, [coordinateMode, mapData, selectedProject]);
+    return projectDisplayPoints.get(selectedProject.id) ?? null;
+  }, [projectDisplayPoints, selectedProject]);
 
   const provinceNames = useMemo(() => {
     const counts = new Map<string, number>();
@@ -400,8 +421,18 @@ function ChinaMapCanvas({
     [labelViewBox, viewportSize],
   );
 
+  const cancelViewAnimation = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelViewAnimation, [cancelViewAnimation]);
+
   const animateTo = useCallback(
     (target: MapViewBox, duration = 780) => {
+      cancelViewAnimation();
       const from = viewBoxRef.current;
       const to = clampViewBox(target, fullViewBox);
       const start = performance.now();
@@ -412,24 +443,26 @@ function ChinaMapCanvas({
         viewBoxRef.current = next;
         setViewBox(next);
         if (progress < 1) {
-          requestAnimationFrame(frame);
+          animationFrameRef.current = requestAnimationFrame(frame);
         } else {
+          animationFrameRef.current = null;
           clearLabelLayoutTimer();
           setLabelViewBox(to);
         }
       };
-      requestAnimationFrame(frame);
+      animationFrameRef.current = requestAnimationFrame(frame);
     },
-    [clearLabelLayoutTimer, fullViewBox],
+    [cancelViewAnimation, clearLabelLayoutTimer, fullViewBox],
   );
 
   const setClampedViewBox = useCallback(
     (next: MapViewBox) => {
+      cancelViewAnimation();
       const clamped = clampViewBox(next, fullViewBox);
       viewBoxRef.current = clamped;
       setViewBox(clamped);
     },
-    [fullViewBox],
+    [cancelViewAnimation, fullViewBox],
   );
 
   const zoomAt = useCallback(
@@ -495,7 +528,10 @@ function ChinaMapCanvas({
   }, [zoomAt]);
 
   useEffect(() => {
-    if (!selectedPoint) return;
+    if (!selectedPoint) {
+      focusedProjectIdRef.current = null;
+      return;
+    }
     setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
     const targetHeight = 95;
     const targetWidth = Math.max(115, targetHeight * (viewportSize.width / viewportSize.height));
@@ -509,10 +545,22 @@ function ChinaMapCanvas({
       fullViewBox,
     );
     clearLabelLayoutTimer();
-    viewBoxRef.current = target;
-    setViewBox(target);
-    setLabelViewBox(target);
-  }, [clearLabelLayoutTimer, fullViewBox, selectedPoint, selectedProject, viewportSize]);
+    const current = viewBoxRef.current;
+    const sameMaxZoom = Math.abs(current.width - target.width) < 0.6 && Math.abs(current.height - target.height) < 0.6;
+    const canPanAnimate =
+      focusedProjectIdRef.current !== null &&
+      focusedProjectIdRef.current !== selectedProject?.id &&
+      sameMaxZoom;
+    focusedProjectIdRef.current = selectedProject?.id ?? null;
+    if (canPanAnimate) {
+      animateTo(target, 620);
+    } else {
+      cancelViewAnimation();
+      viewBoxRef.current = target;
+      setViewBox(target);
+      setLabelViewBox(target);
+    }
+  }, [animateTo, cancelViewAnimation, clearLabelLayoutTimer, fullViewBox, selectedPoint, selectedProject, viewportSize]);
 
   const zoom = useCallback(
     (factor: number) => {
@@ -551,27 +599,20 @@ function ChinaMapCanvas({
 
   const provinceProjectHighlights = useMemo<ProjectHighlightPoint[]>(() => {
     if (!activeProvince) return [];
-    const seen = new Map<string, number>();
     return projects
       .filter((project) => normalizeProvinceName(project.province) === activeProvince)
       .map((project) => {
-        const coord = coordFor(project, coordinateMode);
-        if (!coord) return null;
-        const projected = projectCoord(coord, mapData);
-        const coordKey = `${projected.x.toFixed(2)}|${projected.y.toFixed(2)}`;
-        const index = seen.get(coordKey) ?? 0;
-        seen.set(coordKey, index + 1);
-        const angle = ((project.id * 137.508 + index * 29) % 360) * (Math.PI / 180);
-        const offsetRadius = Math.min(9, index * (coordinateMode === "address" ? 2.2 : 1.55));
+        const point = projectDisplayPoints.get(project.id);
+        if (!point) return null;
         return {
           id: project.id,
-          x: projected.x + Math.cos(angle) * offsetRadius,
-          y: projected.y + Math.sin(angle) * offsetRadius,
+          x: point.x,
+          y: point.y,
           selected: selectedProject?.id === project.id,
         };
       })
       .filter((point): point is ProjectHighlightPoint => Boolean(point));
-  }, [activeProvince, coordinateMode, mapData, projects, selectedProject]);
+  }, [activeProvince, projectDisplayPoints, projects, selectedProject]);
 
   const provinceProjectConnections = useMemo<ProjectConnection[]>(() => {
     const connections: ProjectConnection[] = [];
@@ -596,9 +637,8 @@ function ChinaMapCanvas({
     if (!selectedPoint || !selectedProject) return [];
     return projects
       .map((project) => {
-        const coord = coordFor(project, coordinateMode);
-        if (!coord) return null;
-        const point = projectCoord(coord, mapData);
+        const point = projectDisplayPoints.get(project.id);
+        if (!point) return null;
         return { project, point, distance: distance(point, selectedPoint) };
       })
       .filter((item): item is { project: ProjectRecord; point: ScreenPoint; distance: number } => Boolean(item))
@@ -608,15 +648,14 @@ function ChinaMapCanvas({
         return bSelected - aSelected || a.distance - b.distance;
       })
       .slice(0, 18);
-  }, [coordinateMode, mapData, projects, selectedPoint, selectedProject]);
+  }, [projectDisplayPoints, projects, selectedPoint, selectedProject]);
 
   const visibleProjectsInView = useMemo(() => {
     if (!selectedProvince && !selectedProject) return [];
     return projects
       .map((project) => {
-        const coord = coordFor(project, coordinateMode);
-        if (!coord) return null;
-        const point = projectCoord(coord, mapData);
+        const point = projectDisplayPoints.get(project.id);
+        if (!point) return null;
         return { project, point };
       })
       .filter((item): item is { project: ProjectRecord; point: ScreenPoint } => {
@@ -629,7 +668,7 @@ function ChinaMapCanvas({
         return inView;
       })
       .sort((a, b) => a.project.id - b.project.id);
-  }, [coordinateMode, labelViewBox, mapData, projects, selectedProject, selectedProvince]);
+  }, [labelViewBox, projectDisplayPoints, projects, selectedProject, selectedProvince]);
 
   const focusProvince = useCallback(
     (provinceName: string) => {
@@ -637,8 +676,7 @@ function ChinaMapCanvas({
       const provinceProjects = projects
         .filter((project) => normalizeProvinceName(project.province) === provinceName)
         .map((project) => {
-          const coord = coordFor(project, coordinateMode);
-          return coord ? projectCoord(coord, mapData) : null;
+          return projectDisplayPoints.get(project.id) ?? null;
         })
         .filter((point): point is ScreenPoint => Boolean(point));
       if (!provinceProjects.length) return;
@@ -650,7 +688,7 @@ function ChinaMapCanvas({
       const height = Math.max(130, maxY - minY + 110);
       animateTo({ x: minX - 65, y: minY - 55, width, height }, 760);
     },
-    [animateTo, coordinateMode, mapData, projects],
+    [animateTo, projectDisplayPoints, projects],
   );
 
   const overlayLabels = useMemo<MapLabel[]>(() => {
@@ -674,24 +712,27 @@ function ChinaMapCanvas({
 
     if (labelScale >= 1.75) {
       const cityLimit = labelScale < 2.5 ? 34 : labelScale < 4 ? 80 : 140;
-      const cityCandidates = cityPoints
+      const sortedCities = cityPoints
         .filter((point) => point.type === "city")
         .sort((a, b) => {
           const aActive = selectedProject && a.projectIds.includes(selectedProject.id) ? 1 : 0;
           const bActive = selectedProject && b.projectIds.includes(selectedProject.id) ? 1 : 0;
           return bActive - aActive || b.count - a.count;
-        })
-        .slice(0, cityLimit);
+        });
+      const visibleCities = sortedCities.slice(0, cityLimit);
+      const activeCity = selectedProject ? sortedCities.find((point) => point.projectIds.includes(selectedProject.id)) : undefined;
+      const cityCandidates = activeCity && !visibleCities.some((point) => point.id === activeCity.id) ? [activeCity, ...visibleCities] : visibleCities;
       for (const point of cityCandidates) {
+        const isActiveCity = selectedProject ? point.projectIds.includes(selectedProject.id) : false;
         candidates.push({
           id: `city-${point.id}`,
           kind: "city",
           text: point.label,
           x: point.lng,
           y: point.lat,
-          offsetY: selectedProject && point.projectIds.includes(selectedProject.id) ? -54 : -18,
-          priority: 360 + point.count,
-          active: selectedProject ? point.projectIds.includes(selectedProject.id) : false,
+          offsetY: isActiveCity ? -54 : -18,
+          priority: isActiveCity ? 1600 : 360 + point.count,
+          active: isActiveCity,
         });
       }
     }
@@ -727,10 +768,7 @@ function ChinaMapCanvas({
       }
     }
 
-    const targetScreen = selectedPoint ? labelMapToScreen(selectedPoint.x, selectedPoint.y) : null;
-    const placed: Array<{ x: number; y: number; width: number; height: number }> = targetScreen
-      ? [{ x: targetScreen.x - 34, y: targetScreen.y - 34, width: 68, height: 68 }]
-      : [];
+    const placed: Array<{ x: number; y: number; width: number; height: number }> = [];
     return candidates
       .map((label) => {
         const base = labelMapToScreen(label.x, label.y);
@@ -742,7 +780,8 @@ function ChinaMapCanvas({
         const width = label.kind === "company" ? Math.min(240, Math.max(88, label.text.length * 12)) : label.kind === "province" ? 52 : 46;
         const height = label.kind === "company" ? 32 : 24;
         const box = { x: screen.x - width / 2, y: screen.y - height / 2, width, height };
-        if (placed.some((item) => boxesOverlap(box, item)) && !(label.active && label.kind === "company")) return false;
+        const forceKeep = label.active && (label.kind === "company" || label.kind === "city");
+        if (placed.some((item) => boxesOverlap(box, item)) && !forceKeep) return false;
         placed.push(box);
         return true;
       })
@@ -755,7 +794,6 @@ function ChinaMapCanvas({
     mapData.provinces,
     nearbyProjects,
     provinceNames,
-    selectedPoint,
     selectedProject,
     selectedProvince,
     showProvinceCounts,
@@ -868,18 +906,6 @@ function ChinaMapCanvas({
             <stop offset="44%" stopColor="#22d3ee" stopOpacity="0.72" />
             <stop offset="100%" stopColor="#0e7490" stopOpacity="0" />
           </radialGradient>
-          <radialGradient id="selectedProjectGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#fff7ed" stopOpacity="1" />
-            <stop offset="38%" stopColor="#f97316" stopOpacity="0.94" />
-            <stop offset="100%" stopColor="#facc15" stopOpacity="0" />
-          </radialGradient>
-          <filter id="selectedGlow" x="-70%" y="-70%" width="240%" height="240%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
         <rect className="map-water" x="0" y="0" width={fullViewBox.width} height={fullViewBox.height} />
         <g className="province-fills">
@@ -951,8 +977,8 @@ function ChinaMapCanvas({
         {provinceProjectHighlights.length > 0 && (
           <g className="province-project-highlights">
             {provinceProjectHighlights.map((point) => {
-              const ringRadius = (point.selected ? 12 : 8) / pxPerMapUnit;
-              const coreRadius = (point.selected ? 4.2 : 2.8) / pxPerMapUnit;
+              const ringRadius = 8 / pxPerMapUnit;
+              const coreRadius = (point.selected ? 3.8 : 2.8) / pxPerMapUnit;
               return (
                 <g
                   key={`province-project-${point.id}`}
@@ -1041,19 +1067,6 @@ function ChinaMapCanvas({
           );
         })}
       </div>
-
-      {selectedPoint && (
-        <div
-          className="target-pulse"
-          style={{
-            transform: `translate(${mapToScreen(selectedPoint.x, selectedPoint.y).x}px, ${mapToScreen(selectedPoint.x, selectedPoint.y).y}px) translate(-50%, -50%)`,
-          }}
-        >
-          <span />
-          <span />
-          <span />
-        </div>
-      )}
 
       <div className="map-controls" aria-label="地图缩放">
         <button type="button" onClick={() => zoom(0.66)} aria-label="放大地图">
