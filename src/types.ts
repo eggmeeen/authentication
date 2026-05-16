@@ -63,6 +63,7 @@ export interface MapPoint {
   type: "city" | "project";
   label: string;
   sublabel: string;
+  provinceName?: string;
   count: number;
   lng: number;
   lat: number;

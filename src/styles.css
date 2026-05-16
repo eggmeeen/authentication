@@ -546,6 +546,137 @@ p {
   stroke: #fff7ed;
 }
 
+.province-project-highlights {
+  pointer-events: none;
+}
+
+.province-project-ring {
+  fill: url("#provinceProjectGlow");
+  opacity: 0.76;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: province-project-pulse 2.15s ease-in-out infinite;
+}
+
+.province-project-core {
+  fill: #0891b2;
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 5px rgba(6, 182, 212, 0.7));
+  animation: province-project-core 1.8s ease-in-out infinite;
+}
+
+.province-project-highlights .is-selected .province-project-ring {
+  fill: url("#selectedProjectGlow");
+  opacity: 0.96;
+  animation-duration: 1.35s;
+}
+
+.province-project-highlights .is-selected .province-project-core {
+  fill: #f97316;
+  stroke: #fff7ed;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.92));
+}
+
+.theme-night .province-project-core {
+  fill: #67e8f9;
+  stroke: #07111d;
+  filter: drop-shadow(0 0 7px rgba(103, 232, 249, 0.78));
+}
+
+.theme-night .province-project-highlights .is-selected .province-project-core {
+  fill: #fbbf24;
+  stroke: #fff7ed;
+}
+
+@keyframes province-project-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.82);
+  }
+
+  50% {
+    opacity: 0.96;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes province-project-core {
+  50% {
+    opacity: 0.62;
+  }
+}
+
+.province-count-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.province-count-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  max-width: 78px;
+  border: 1px solid rgba(14, 116, 144, 0.26);
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: #12343c;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 5px 14px rgba(15, 81, 89, 0.16);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.province-count-marker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.province-count-marker strong {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #0f766e;
+  font-size: 10px;
+}
+
+.province-count-marker.is-active {
+  border-color: rgba(249, 115, 22, 0.58);
+  background: rgba(255, 247, 237, 0.94);
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12), 0 8px 18px rgba(120, 53, 15, 0.2);
+}
+
+.province-count-marker.is-active strong {
+  background: #f97316;
+}
+
+.theme-night .province-count-marker {
+  border-color: rgba(103, 232, 249, 0.34);
+  color: #e6faff;
+  background: rgba(7, 17, 29, 0.82);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.34);
+}
+
+.theme-night .province-count-marker strong {
+  color: #07111d;
+  background: #67e8f9;
+}
+
 .map-label-layer {
   position: absolute;
   inset: 0;

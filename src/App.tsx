@@ -84,6 +84,7 @@ function buildCityPoints(projects: ProjectRecord[], mapData: ChinaMapDataset): M
       type: "city",
       label: project.displayCityLabel || project.displayCity,
       sublabel: `${project.province} · ${project.displayCity}`,
+      provinceName: normalizeProvinceName(project.province),
       count: 1,
       lng: point.x,
       lat: point.y,
@@ -181,6 +182,13 @@ interface RoadSegment {
   y1: number;
   x2: number;
   y2: number;
+}
+
+interface ProjectHighlightPoint {
+  id: number;
+  x: number;
+  y: number;
+  selected: boolean;
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
@@ -291,10 +299,25 @@ function ChinaMapCanvas({
     return names;
   }, [projects]);
 
+  const currentScale = fullViewBox.width / viewBox.width;
   const labelScale = fullViewBox.width / labelViewBox.width;
+  const showProvinceCounts = currentScale <= 1.18;
   const pxPerMapUnit = viewportSize.width / viewBox.width;
   const provinceFill = theme === "night" ? NIGHT_PROVINCE_COLORS : PROVINCE_COLORS;
   const activeProvince = selectedProvince ?? (selectedProject ? normalizeProvinceName(selectedProject.province) : null);
+
+  const provinceCountLabels = useMemo(() => {
+    if (!showProvinceCounts) return [];
+    return mapData.provinces
+      .map((province) => ({
+        code: province.code,
+        name: province.name,
+        count: provinceNames.get(province.name) ?? 0,
+        x: province.label.x,
+        y: province.label.y,
+      }))
+      .filter((province) => province.count > 0);
+  }, [mapData.provinces, provinceNames, showProvinceCounts]);
 
   const mapToScreen = useCallback(
     (x: number, y: number): ScreenPoint => ({
@@ -461,6 +484,30 @@ function ChinaMapCanvas({
     return Array.from(segments.values());
   }, [mapData.cities, projectCityNames]);
 
+  const provinceProjectHighlights = useMemo<ProjectHighlightPoint[]>(() => {
+    if (!activeProvince) return [];
+    const seen = new Map<string, number>();
+    return projects
+      .filter((project) => normalizeProvinceName(project.province) === activeProvince)
+      .map((project) => {
+        const coord = coordFor(project, coordinateMode);
+        if (!coord) return null;
+        const projected = projectCoord(coord, mapData);
+        const coordKey = `${projected.x.toFixed(2)}|${projected.y.toFixed(2)}`;
+        const index = seen.get(coordKey) ?? 0;
+        seen.set(coordKey, index + 1);
+        const angle = ((project.id * 137.508 + index * 29) % 360) * (Math.PI / 180);
+        const offsetRadius = Math.min(9, index * (coordinateMode === "address" ? 2.2 : 1.55));
+        return {
+          id: project.id,
+          x: projected.x + Math.cos(angle) * offsetRadius,
+          y: projected.y + Math.sin(angle) * offsetRadius,
+          selected: selectedProject?.id === project.id,
+        };
+      })
+      .filter((point): point is ProjectHighlightPoint => Boolean(point));
+  }, [activeProvince, coordinateMode, mapData, projects, selectedProject]);
+
   const nearbyProjects = useMemo(() => {
     if (!selectedPoint || !selectedProject) return [];
     return projects
@@ -525,6 +572,7 @@ function ChinaMapCanvas({
   const overlayLabels = useMemo<MapLabel[]>(() => {
     const candidates: MapLabel[] = [];
     for (const province of mapData.provinces) {
+      if (showProvinceCounts) continue;
       if (!provinceNames.has(province.name)) continue;
       if (labelScale < 1.85 || province.name === activeProvince) {
         candidates.push({
@@ -626,6 +674,7 @@ function ChinaMapCanvas({
     selectedPoint,
     selectedProject,
     selectedProvince,
+    showProvinceCounts,
     viewportSize,
     visibleProjectsInView,
   ]);
@@ -724,6 +773,16 @@ function ChinaMapCanvas({
             <stop offset="50%" stopColor="#facc15" />
             <stop offset="100%" stopColor="#22d3ee" />
           </linearGradient>
+          <radialGradient id="provinceProjectGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#67e8f9" stopOpacity="0.98" />
+            <stop offset="44%" stopColor="#22d3ee" stopOpacity="0.72" />
+            <stop offset="100%" stopColor="#0e7490" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="selectedProjectGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#fff7ed" stopOpacity="1" />
+            <stop offset="38%" stopColor="#f97316" stopOpacity="0.94" />
+            <stop offset="100%" stopColor="#facc15" stopOpacity="0" />
+          </radialGradient>
           <filter id="selectedGlow" x="-70%" y="-70%" width="240%" height="240%">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge>
@@ -785,6 +844,20 @@ function ChinaMapCanvas({
             />
           ))}
         </g>
+        {provinceProjectHighlights.length > 0 && (
+          <g className="province-project-highlights" aria-hidden="true">
+            {provinceProjectHighlights.map((point) => {
+              const ringRadius = (point.selected ? 12 : 8) / pxPerMapUnit;
+              const coreRadius = (point.selected ? 4.2 : 2.8) / pxPerMapUnit;
+              return (
+                <g key={`province-project-${point.id}`} className={point.selected ? "is-selected" : ""}>
+                  <circle className="province-project-ring" cx={point.x} cy={point.y} r={ringRadius} />
+                  <circle className="province-project-core" cx={point.x} cy={point.y} r={coreRadius} />
+                </g>
+              );
+            })}
+          </g>
+        )}
         <g className="project-points">
           {cityPoints.map((point) => {
             const active = selectedProject ? point.projectIds.includes(selectedProject.id) : false;
@@ -809,6 +882,27 @@ function ChinaMapCanvas({
           })}
         </g>
       </svg>
+
+      {provinceCountLabels.length > 0 && (
+        <div className="province-count-layer" aria-hidden="true">
+          {provinceCountLabels.map((province) => {
+            const screen = mapToScreen(province.x, province.y);
+            return (
+              <button
+                key={`province-count-${province.code}`}
+                className={`province-count-marker ${province.name === activeProvince ? "is-active" : ""}`}
+                type="button"
+                style={{ transform: `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)` }}
+                onClick={() => focusProvince(province.name)}
+                tabIndex={-1}
+              >
+                <span>{province.name}</span>
+                <strong>{province.count}</strong>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="map-label-layer" aria-hidden="true">
         {overlayLabels.map((label) => {
