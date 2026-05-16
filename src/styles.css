@@ -19,6 +19,7 @@ body,
   width: 100%;
   min-width: 320px;
   height: 100%;
+  min-height: 100dvh;
   margin: 0;
   overflow: hidden;
   overscroll-behavior: none;
@@ -36,7 +37,7 @@ button {
 .app-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background:
     linear-gradient(135deg, rgba(21, 94, 117, 0.08), rgba(245, 158, 11, 0.06) 45%, rgba(16, 185, 129, 0.08)),
@@ -165,6 +166,10 @@ p {
   height: 100%;
   min-height: 0;
   margin: 0 auto;
+}
+
+.mobile-panel-switcher {
+  display: none;
 }
 
 .visual-pane,
@@ -1163,11 +1168,12 @@ p {
 
 @media (max-width: 780px) {
   .app-shell {
-    padding: 10px;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
   }
 
   .toolbar {
     grid-template-columns: 1fr;
+    padding: 10px;
   }
 
   .segmented {
@@ -1186,9 +1192,103 @@ p {
   .visual-pane {
     min-height: 0;
   }
+
+  .workspace.is-mobile {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .mobile-panel-switcher {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .mobile-panel-switcher button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 40px;
+    border: 1px solid rgba(19, 32, 37, 0.12);
+    border-radius: 8px;
+    color: #46565f;
+    background: rgba(255, 255, 255, 0.82);
+    font-weight: 800;
+  }
+
+  .mobile-panel-switcher button.is-active {
+    color: #f8fafc;
+    border-color: rgba(21, 94, 117, 0.4);
+    background: #155e75;
+    box-shadow: 0 10px 20px rgba(21, 94, 117, 0.2);
+  }
+
+  .theme-night .mobile-panel-switcher button {
+    color: #d6e7ef;
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.88);
+  }
+
+  .theme-night .mobile-panel-switcher button.is-active {
+    color: #07111d;
+    border-color: rgba(251, 191, 36, 0.36);
+    background: #fbbf24;
+  }
+
+  .workspace.is-mobile .visual-pane,
+  .workspace.is-mobile .side-panel {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .workspace.is-mobile .visual-pane.is-active {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .workspace.is-mobile .side-panel.is-active {
+    display: grid;
+  }
+
+  .workspace.is-mobile .is-hidden-mobile {
+    display: none;
+  }
+
+  .workspace.is-mobile .stage {
+    min-height: 0;
+  }
+
+  .workspace.is-mobile .visual-pane.is-active {
+    min-height: min(64dvh, 700px);
+  }
+
+  .workspace.is-mobile .side-panel.is-active {
+    min-height: 0;
+  }
+
+  .project-list {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .map-controls {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  .map-controls button {
+    min-width: 46px;
+    height: 42px;
+  }
 }
 
 @media (max-width: 520px) {
+  .topbar {
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
   .brand-mark {
     width: 40px;
     height: 40px;
@@ -1211,5 +1311,29 @@ p {
 
   .panel-head {
     flex-direction: column;
+  }
+
+  .panel-head,
+  .selection-summary,
+  .coordinate-note {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .project-list {
+    padding: 10px;
+  }
+
+  .project-row {
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+
+  .focus-card strong {
+    font-size: 15px;
+  }
+
+  .focus-card p {
+    font-size: 12px;
   }
 }
