@@ -226,6 +226,7 @@ function ChinaMapCanvas({
   const viewBoxRef = useRef(viewBox);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureScaleRef = useRef(1);
+  const labelLayoutTimerRef = useRef<number | null>(null);
   const gestureRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startX: number;
@@ -253,10 +254,30 @@ function ChinaMapCanvas({
     setLabelViewBox(fullViewBox);
   }, [fullViewBox]);
 
+  const clearLabelLayoutTimer = useCallback(() => {
+    if (labelLayoutTimerRef.current !== null) {
+      window.clearTimeout(labelLayoutTimerRef.current);
+      labelLayoutTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleLabelLayout = useCallback(
+    (nextViewBox: MapViewBox, delay = 240) => {
+      clearLabelLayoutTimer();
+      labelLayoutTimerRef.current = window.setTimeout(() => {
+        setLabelViewBox(nextViewBox);
+        labelLayoutTimerRef.current = null;
+      }, delay);
+    },
+    [clearLabelLayoutTimer],
+  );
+
   useEffect(() => {
-    const timer = window.setTimeout(() => setLabelViewBox(viewBox), 260);
-    return () => window.clearTimeout(timer);
-  }, [viewBox]);
+    if (pointersRef.current.size > 0 || gestureRef.current.mode !== "none") return;
+    scheduleLabelLayout(viewBox);
+  }, [scheduleLabelLayout, viewBox]);
+
+  useEffect(() => clearLabelLayoutTimer, [clearLabelLayoutTimer]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -357,12 +378,13 @@ function ChinaMapCanvas({
         if (progress < 1) {
           requestAnimationFrame(frame);
         } else {
+          clearLabelLayoutTimer();
           setLabelViewBox(to);
         }
       };
       requestAnimationFrame(frame);
     },
-    [fullViewBox],
+    [clearLabelLayoutTimer, fullViewBox],
   );
 
   const setClampedViewBox = useCallback(
@@ -680,6 +702,7 @@ function ChinaMapCanvas({
   ]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
+    clearLabelLayoutTimer();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const pointers = Array.from(pointersRef.current.values());
@@ -705,7 +728,7 @@ function ChinaMapCanvas({
         moved: false,
       };
     }
-  }, []);
+  }, [clearLabelLayoutTimer]);
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -752,14 +775,16 @@ function ChinaMapCanvas({
         gestureRef.current.moved = false;
       }, 0);
       gestureRef.current.mode = "none";
+      scheduleLabelLayout(viewBoxRef.current, 120);
     }
-  }, []);
+  }, [scheduleLabelLayout]);
 
   return (
     <div className="map-canvas" ref={containerRef}>
       <svg
         className="china-map"
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+        preserveAspectRatio="none"
         role="img"
         aria-label="中国认证项目分布线框图"
         onPointerDown={onPointerDown}
