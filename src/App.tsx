@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Building2, ChevronUp, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Moon, Search, Sun } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, CircleHelp, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Minus, MousePointer2, Plus, RotateCcw, Search, Sun, Moon, X } from "lucide-react";
 import type { ChinaMapDataset, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
 
 const PROVINCE_COLORS = [
@@ -153,6 +153,19 @@ function easeInOutCubic(value: number): number {
   return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
 }
 
+function stableLabelOffset(id: number, active = false): ScreenPoint {
+  if (active) return { x: 76, y: -34 };
+  const directions = [
+    { x: 68, y: -28 },
+    { x: -68, y: -28 },
+    { x: 68, y: 28 },
+    { x: -68, y: 28 },
+    { x: 0, y: -46 },
+    { x: 0, y: 46 },
+  ];
+  return directions[Math.abs(id * 2654435761) % directions.length];
+}
+
 interface MapViewBox {
   x: number;
   y: number;
@@ -274,6 +287,7 @@ function ChinaMapCanvas({
   theme,
   mapData,
   onSelectProject,
+  onClearSelection,
 }: {
   projects: ProjectRecord[];
   selectedProject: ProjectRecord | null;
@@ -281,6 +295,7 @@ function ChinaMapCanvas({
   theme: ThemeMode;
   mapData: ChinaMapDataset;
   onSelectProject: (projectId: number) => void;
+  onClearSelection: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fullViewBox = useMemo<MapViewBox>(
@@ -288,15 +303,13 @@ function ChinaMapCanvas({
     [mapData],
   );
   const [viewBox, setViewBox] = useState<MapViewBox>(fullViewBox);
-  const [labelViewBox, setLabelViewBox] = useState<MapViewBox>(fullViewBox);
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
+  const [showMapHelp, setShowMapHelp] = useState(true);
   const viewBoxRef = useRef(viewBox);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureScaleRef = useRef(1);
-  const labelLayoutTimerRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const focusedProjectIdRef = useRef<number | null>(null);
   const gestureRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startX: number;
@@ -321,33 +334,7 @@ function ChinaMapCanvas({
 
   useEffect(() => {
     setViewBox(fullViewBox);
-    setLabelViewBox(fullViewBox);
   }, [fullViewBox]);
-
-  const clearLabelLayoutTimer = useCallback(() => {
-    if (labelLayoutTimerRef.current !== null) {
-      window.clearTimeout(labelLayoutTimerRef.current);
-      labelLayoutTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleLabelLayout = useCallback(
-    (nextViewBox: MapViewBox, delay = 240) => {
-      clearLabelLayoutTimer();
-      labelLayoutTimerRef.current = window.setTimeout(() => {
-        setLabelViewBox(nextViewBox);
-        labelLayoutTimerRef.current = null;
-      }, delay);
-    },
-    [clearLabelLayoutTimer],
-  );
-
-  useEffect(() => {
-    if (pointersRef.current.size > 0 || gestureRef.current.mode !== "none") return;
-    scheduleLabelLayout(viewBox);
-  }, [scheduleLabelLayout, viewBox]);
-
-  useEffect(() => clearLabelLayoutTimer, [clearLabelLayoutTimer]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -410,7 +397,7 @@ function ChinaMapCanvas({
   }, [projects]);
 
   const currentScale = fullViewBox.width / viewBox.width;
-  const labelScale = fullViewBox.width / labelViewBox.width;
+  const labelScale = currentScale;
   const showProvinceCounts = currentScale <= 1.18;
   const mapViewport = useMemo(() => renderedViewport(viewBox, viewportSize), [viewBox, viewportSize]);
   const pxPerMapUnit = mapViewport.width / viewBox.width;
@@ -438,6 +425,25 @@ function ChinaMapCanvas({
     [mapViewport, viewBox],
   );
 
+  const visibleProvinceCountLabels = useMemo(() => {
+    const placed: Array<{ x: number; y: number; width: number; height: number }> = [];
+    return provinceCountLabels
+      .map((province) => ({ ...province, screen: mapToScreen(province.x, province.y) }))
+      .sort((a, b) => {
+        const aActive = a.name === activeProvince ? 1 : 0;
+        const bActive = b.name === activeProvince ? 1 : 0;
+        return bActive - aActive || b.count - a.count;
+      })
+      .filter((province) => {
+        const width = Math.max(42, Math.min(74, 30 + province.name.length * 10));
+        const box = { x: province.screen.x - width / 2 - 3, y: province.screen.y - 14, width: width + 6, height: 28 };
+        if (province.screen.x < 12 || province.screen.y < 12 || province.screen.x > viewportSize.width - 12 || province.screen.y > viewportSize.height - 12) return false;
+        if (placed.some((item) => boxesOverlap(box, item)) && province.name !== activeProvince) return false;
+        placed.push(box);
+        return true;
+      });
+  }, [activeProvince, mapToScreen, provinceCountLabels, viewportSize]);
+
   const screenToMap = useCallback(
     (x: number, y: number, sourceViewBox = viewBoxRef.current): ScreenPoint => {
       const sourceViewport = renderedViewport(sourceViewBox, viewportSize);
@@ -447,17 +453,6 @@ function ChinaMapCanvas({
       };
     },
     [viewportSize],
-  );
-
-  const labelMapToScreen = useCallback(
-    (x: number, y: number): ScreenPoint => {
-      const labelViewport = renderedViewport(labelViewBox, viewportSize);
-      return {
-        x: labelViewport.x + ((x - labelViewBox.x) / labelViewBox.width) * labelViewport.width,
-        y: labelViewport.y + ((y - labelViewBox.y) / labelViewBox.height) * labelViewport.height,
-      };
-    },
-    [labelViewBox, viewportSize],
   );
 
   const cancelViewAnimation = useCallback(() => {
@@ -485,13 +480,11 @@ function ChinaMapCanvas({
           animationFrameRef.current = requestAnimationFrame(frame);
         } else {
           animationFrameRef.current = null;
-          clearLabelLayoutTimer();
-          setLabelViewBox(to);
         }
       };
       animationFrameRef.current = requestAnimationFrame(frame);
     },
-    [cancelViewAnimation, clearLabelLayoutTimer, fullViewBox],
+    [cancelViewAnimation, fullViewBox],
   );
 
   const setClampedViewBox = useCallback(
@@ -568,38 +561,24 @@ function ChinaMapCanvas({
 
   useEffect(() => {
     if (!selectedPoint) {
-      focusedProjectIdRef.current = null;
       return;
     }
     setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
-    const targetHeight = MIN_VIEWBOX_HEIGHT;
-    const targetWidth = Math.max(MIN_VIEWBOX_WIDTH, targetHeight * (viewportSize.width / viewportSize.height));
+    const current = viewBoxRef.current;
+    const desiredScale = Math.min(6, Math.max(3.2, fullViewBox.width / current.width));
+    const focusWidth = fullViewBox.width / desiredScale;
+    const focusHeight = fullViewBox.height / desiredScale;
     const target = clampViewBox(
       {
-        x: selectedPoint.x - targetWidth / 2,
-        y: selectedPoint.y - targetHeight / 2,
-        width: targetWidth,
-        height: targetHeight,
+        x: selectedPoint.x - focusWidth / 2,
+        y: selectedPoint.y - focusHeight / 2,
+        width: focusWidth,
+        height: focusHeight,
       },
       fullViewBox,
     );
-    clearLabelLayoutTimer();
-    const current = viewBoxRef.current;
-    const sameMaxZoom = Math.abs(current.width - target.width) < 0.6 && Math.abs(current.height - target.height) < 0.6;
-    const canPanAnimate =
-      focusedProjectIdRef.current !== null &&
-      focusedProjectIdRef.current !== selectedProject?.id &&
-      sameMaxZoom;
-    focusedProjectIdRef.current = selectedProject?.id ?? null;
-    if (canPanAnimate) {
-      animateTo(target, 620);
-    } else {
-      cancelViewAnimation();
-      viewBoxRef.current = target;
-      setViewBox(target);
-      setLabelViewBox(target);
-    }
-  }, [animateTo, cancelViewAnimation, clearLabelLayoutTimer, fullViewBox, selectedPoint, selectedProject, viewportSize]);
+    animateTo(target, 520);
+  }, [animateTo, fullViewBox, selectedPoint, selectedProject]);
 
   const zoom = useCallback(
     (factor: number) => {
@@ -767,14 +746,14 @@ function ChinaMapCanvas({
       .filter((item): item is { project: ProjectRecord; point: ScreenPoint } => {
         if (!item) return false;
         const inView =
-          item.point.x >= labelViewBox.x &&
-          item.point.x <= labelViewBox.x + labelViewBox.width &&
-          item.point.y >= labelViewBox.y &&
-          item.point.y <= labelViewBox.y + labelViewBox.height;
+          item.point.x >= viewBox.x &&
+          item.point.x <= viewBox.x + viewBox.width &&
+          item.point.y >= viewBox.y &&
+          item.point.y <= viewBox.y + viewBox.height;
         return inView;
       })
       .sort((a, b) => a.project.id - b.project.id);
-  }, [labelViewBox, projectDisplayPoints, projects, selectedProject, selectedProvince]);
+  }, [projectDisplayPoints, projects, selectedProject, selectedProvince, viewBox]);
 
   const focusProvince = useCallback(
     (provinceName: string) => {
@@ -844,29 +823,20 @@ function ChinaMapCanvas({
     }
 
     if ((selectedProvince || selectedProject) && labelScale >= 1.35) {
-      const offsets = [
-        { x: 104, y: -38 },
-        { x: -104, y: -38 },
-        { x: 112, y: 38 },
-        { x: -112, y: 38 },
-        { x: 0, y: -58 },
-        { x: 0, y: 58 },
-        { x: 146, y: 0 },
-        { x: -146, y: 0 },
-      ];
       const companyItems = selectedProvince ? visibleProjectsInView : nearbyProjects;
-      for (const [index, item] of companyItems.entries()) {
+      for (const item of companyItems) {
         const isActive = selectedProject ? item.project.id === selectedProject.id : false;
-        const priorityDistance = "distance" in item && typeof item.distance === "number" ? item.distance : index;
-        const offset = offsets[index % offsets.length];
+        if (isActive) continue;
+        const priorityDistance = "distance" in item && typeof item.distance === "number" ? item.distance : item.project.id;
+        const offset = stableLabelOffset(item.project.id, isActive);
         candidates.push({
           id: `company-${item.project.id}`,
           kind: "company",
           text: `${companyCode(item.project)} ${item.project.company}`,
           x: item.point.x,
           y: item.point.y,
-          offsetX: isActive ? 104 : offset.x,
-          offsetY: isActive ? -42 : offset.y,
+          offsetX: offset.x,
+          offsetY: offset.y,
           priority: isActive ? 2000 : 900 - priorityDistance,
           active: isActive,
           projectId: item.project.id,
@@ -875,23 +845,25 @@ function ChinaMapCanvas({
     }
 
     const reservedBoxes: Array<{ x: number; y: number; width: number; height: number }> = [];
-    if (selectedProject) {
-      const compact = viewportSize.width <= 520;
-      const focusCardWidth = compact ? Math.max(180, viewportSize.width - 20) : Math.min(430, Math.max(220, viewportSize.width - 36));
-      const focusCardHeight = compact ? 134 : 136;
-      const focusCardLeft = compact ? 10 : 18;
-      const focusCardBottom = compact ? 10 : 18;
+    if (showMapHelp) {
       reservedBoxes.push({
-        x: focusCardLeft,
-        y: viewportSize.height - focusCardBottom - focusCardHeight,
-        width: focusCardWidth,
-        height: focusCardHeight,
+        x: 10,
+        y: Math.max(0, viewportSize.height - 130),
+        width: Math.min(240, viewportSize.width - 20),
+        height: 120,
       });
+    }
+    if (selectedProject && selectedPoint) {
+      const anchor = mapToScreen(selectedPoint.x, selectedPoint.y);
+      const popoverWidth = Math.min(300, viewportSize.width - 32);
+      const popoverX = Math.max(popoverWidth / 2 + 8, Math.min(viewportSize.width - popoverWidth / 2 - 8, anchor.x + (anchor.x > viewportSize.width * 0.62 ? -170 : 170)));
+      const popoverY = Math.max(88, Math.min(viewportSize.height - 116, anchor.y - 70));
+      reservedBoxes.push({ x: popoverX - popoverWidth / 2, y: popoverY - 58, width: popoverWidth, height: 116 });
     }
     const placed: Array<{ x: number; y: number; width: number; height: number }> = [...reservedBoxes];
     return candidates
       .map((label) => {
-        const base = labelMapToScreen(label.x, label.y);
+        const base = mapToScreen(label.x, label.y);
         return { label, screen: { x: base.x + (label.offsetX ?? 0), y: base.y + (label.offsetY ?? 0) } };
       })
       .filter(({ screen }) => screen.x > -90 && screen.y > -40 && screen.x < viewportSize.width + 90 && screen.y < viewportSize.height + 40)
@@ -910,20 +882,21 @@ function ChinaMapCanvas({
   }, [
     activeProvince,
     cityPoints,
-    labelMapToScreen,
     labelScale,
     mapData.provinces,
+    mapToScreen,
     nearbyProjects,
     provinceNames,
     selectedProject,
     selectedProvince,
+    selectedPoint,
+    showMapHelp,
     showProvinceCounts,
     viewportSize,
     visibleProjectsInView,
   ]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<SVGSVGElement>) => {
-    clearLabelLayoutTimer();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const pointers = Array.from(pointersRef.current.values());
@@ -949,7 +922,7 @@ function ChinaMapCanvas({
         moved: false,
       };
     }
-  }, [clearLabelLayoutTimer]);
+  }, []);
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -1000,9 +973,8 @@ function ChinaMapCanvas({
         gestureRef.current.moved = false;
       }, 0);
       gestureRef.current.mode = "none";
-      scheduleLabelLayout(viewBoxRef.current, 120);
     }
-  }, [scheduleLabelLayout]);
+  }, []);
 
   return (
     <div className="map-canvas" ref={containerRef}>
@@ -1148,16 +1120,15 @@ function ChinaMapCanvas({
         </g>
       </svg>
 
-      {provinceCountLabels.length > 0 && (
+      {visibleProvinceCountLabels.length > 0 && (
         <div className="province-count-layer" aria-hidden="true">
-          {provinceCountLabels.map((province) => {
-            const screen = mapToScreen(province.x, province.y);
+          {visibleProvinceCountLabels.map((province) => {
             return (
               <button
                 key={`province-count-${province.code}`}
                 className={`province-count-marker ${province.name === activeProvince ? "is-active" : ""}`}
                 type="button"
-                style={{ transform: `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)` }}
+                style={{ transform: `translate(${province.screen.x}px, ${province.screen.y}px) translate(-50%, -50%)` }}
                 onClick={() => focusProvince(province.name)}
                 tabIndex={-1}
               >
@@ -1173,30 +1144,73 @@ function ChinaMapCanvas({
         {overlayLabels.map((label) => {
           const base = mapToScreen(label.x, label.y);
           const screen = { x: base.x + (label.offsetX ?? 0), y: base.y + (label.offsetY ?? 0) };
+          const lineLength = Math.hypot(screen.x - base.x, screen.y - base.y);
+          const lineAngle = Math.atan2(screen.y - base.y, screen.x - base.x) * (180 / Math.PI);
           return (
-            <button
-              key={label.id}
-              className={`map-label is-${label.kind} ${label.active ? "is-active" : ""}`}
-              type="button"
-              style={{ transform: `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)` }}
-              onClick={() => {
-                if (label.projectId) onSelectProject(label.projectId);
-                if (label.provinceName) focusProvince(label.provinceName);
-              }}
-              tabIndex={-1}
-            >
-              {label.text}
-            </button>
+            <div key={label.id}>
+              {label.kind !== "province" && (
+                <>
+                  <span className={`label-anchor is-${label.kind}`} style={{ transform: `translate(${base.x}px, ${base.y}px) translate(-50%, -50%)` }} />
+                  <span className={`label-leader is-${label.kind}`} style={{ width: `${lineLength}px`, transform: `translate(${base.x}px, ${base.y}px) rotate(${lineAngle}deg)` }} />
+                </>
+              )}
+              <button
+                className={`map-label is-${label.kind} ${label.active ? "is-active" : ""}`}
+                type="button"
+                style={{ transform: `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)` }}
+                onClick={() => {
+                  if (label.projectId) onSelectProject(label.projectId);
+                  if (label.provinceName) focusProvince(label.provinceName);
+                }}
+                tabIndex={-1}
+              >
+                {label.text}
+              </button>
+            </div>
           );
         })}
       </div>
 
+      {selectedProject && selectedPoint && (() => {
+        const anchor = mapToScreen(selectedPoint.x, selectedPoint.y);
+        const popoverX = Math.max(150, Math.min(viewportSize.width - 160, anchor.x + (anchor.x > viewportSize.width * 0.62 ? -170 : 170)));
+        const popoverY = Math.max(88, Math.min(viewportSize.height - 116, anchor.y - 70));
+        const lineLength = Math.hypot(popoverX - anchor.x, popoverY - anchor.y);
+        const lineAngle = Math.atan2(popoverY - anchor.y, popoverX - anchor.x) * (180 / Math.PI);
+        return (
+          <div className="selected-location-layer">
+            <span className="selected-anchor" style={{ transform: `translate(${anchor.x}px, ${anchor.y}px) translate(-50%, -50%)` }} />
+            <span className="selected-leader" style={{ width: `${lineLength}px`, transform: `translate(${anchor.x}px, ${anchor.y}px) rotate(${lineAngle}deg)` }} />
+            <article className="map-popover" style={{ transform: `translate(${popoverX}px, ${popoverY}px) translate(-50%, -50%)` }}>
+              <button type="button" className="popover-close" aria-label="关闭项目详情" onClick={onClearSelection}><X size={15} /></button>
+              <span>{companyCode(selectedProject)} · {selectedProject.displayCityLabel || selectedProject.displayCity}</span>
+              <strong>{selectedProject.company}</strong>
+              <p>{selectedProject.address}</p>
+            </article>
+          </div>
+        );
+      })()}
+
+      <div className="map-help">
+        <button type="button" className="map-help-toggle" onClick={() => setShowMapHelp((current) => !current)} aria-expanded={showMapHelp}>
+          <CircleHelp size={16} /> 地图使用说明 {showMapHelp ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        </button>
+        {showMapHelp && (
+          <div className="map-help-body">
+            <span><MousePointer2 size={14} />拖拽移动 · 滚轮缩放</span>
+            <span><i className="legend-dot" />圆点为项目，数字为聚合数量</span>
+            <span><i className="legend-label" />省 → 市 → 企业，随缩放分级显示</span>
+          </div>
+        )}
+      </div>
+
+      <div className="map-scale-indicator">{currentScale < 1.2 ? "全国" : currentScale < 2.4 ? "区域" : currentScale < 4.5 ? "城市" : "项目"} · {Math.round(currentScale * 100)}%</div>
       <div className="map-controls" aria-label="地图缩放">
         <button type="button" onClick={() => zoom(0.66)} aria-label="放大地图">
-          +
+          <Plus size={18} />
         </button>
         <button type="button" onClick={() => zoom(1.45)} aria-label="缩小地图">
-          -
+          <Minus size={18} />
         </button>
         <button
           type="button"
@@ -1206,7 +1220,7 @@ function ChinaMapCanvas({
           }}
           aria-label="显示全国"
         >
-          全国
+          <RotateCcw size={16} /> 全国
         </button>
       </div>
     </div>
@@ -1277,14 +1291,6 @@ export default function App() {
     if (!dataset || !selectedProjectId) return null;
     return dataset.projects.find((project) => project.id === selectedProjectId) ?? null;
   }, [dataset, selectedProjectId]);
-
-  useEffect(() => {
-    if (!query.trim() || !filteredProjects.length) return;
-    setSelectedProjectId((current) => {
-      if (current && filteredProjects.some((project) => project.id === current)) return current;
-      return filteredProjects[0].id;
-    });
-  }, [filteredProjects, query]);
 
   const onSelectProject = useCallback((projectId: number) => {
     setSelectedProjectId(projectId);
@@ -1369,9 +1375,14 @@ export default function App() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && filteredProjects.length) onSelectProject(filteredProjects[0].id);
+                  if (event.key === "Escape") clearSearch();
+                }}
                 placeholder="搜索编号、公司、城市、地址"
                 aria-label="搜索编号、公司、城市、地址"
               />
+              {query && <span className="search-count">{filteredProjects.length} 条</span>}
               {query && (
                 <button className="ghost-button" type="button" onClick={clearSearch}>
                   清除
@@ -1381,7 +1392,7 @@ export default function App() {
 
             <div className="map-mode-note">
               <MapPin size={16} />
-              本地线框地图
+              高精度矢量地图
             </div>
 
             <div className="segmented" aria-label="坐标模式">
@@ -1391,7 +1402,7 @@ export default function App() {
               </button>
               <button className={coordinateMode === "address" ? "is-active" : ""} type="button" onClick={() => setCoordinateMode("address")}>
                 <LocateFixed size={16} />
-                精确地址
+                区县级
               </button>
             </div>
           </div>
@@ -1404,14 +1415,8 @@ export default function App() {
               theme={theme}
               mapData={mapData}
               onSelectProject={onSelectProject}
+              onClearSelection={() => setSelectedProjectId(null)}
             />
-            {selectedProject && (
-              <div className="focus-card">
-                <span>{selectedProject.displayCityLabel || selectedProject.displayCity}</span>
-                <strong>{selectedProject.company}</strong>
-                <p>{selectedProject.address}</p>
-              </div>
-            )}
           </div>
         </section>
 

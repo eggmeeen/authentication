@@ -121,7 +121,9 @@ def main() -> None:
         name = properties["name"]
         fullname = properties.get("fullname", name)
         center = properties.get("center") or [0, 0]
-        path = " ".join(filter(None, (ring_to_path(ring, 0.75) for ring in geometry_rings(feature))))
+        # Keep enough geometry for close zooms. The previous tolerances were tuned
+        # for a thumbnail-sized map and produced visibly angular borders.
+        path = " ".join(filter(None, (ring_to_path(ring, 0.18) for ring in geometry_rings(feature))))
         label_x, label_y = project(center[0], center[1])
         provinces.append(
             {
@@ -152,7 +154,7 @@ def main() -> None:
                     "y": city_y,
                 }
             )
-            city_path = " ".join(filter(None, (ring_to_path(ring, 1.25) for ring in geometry_rings(city))))
+            city_path = " ".join(filter(None, (ring_to_path(ring, 0.32) for ring in geometry_rings(city))))
             if city_path:
                 city_paths.append({"province": name, "name": city_props["name"], "path": city_path})
 
