@@ -1371,6 +1371,187 @@ p {
   }
 }
 
+/* Precision cartography refinement ---------------------------------------- */
+.stage,
+.map-water {
+  background: #f1f7f9;
+  fill: #f1f7f9;
+}
+
+.map-graticule {
+  pointer-events: none;
+}
+
+.map-graticule line {
+  stroke: rgba(60, 105, 122, 0.1);
+  stroke-width: 0.6;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 2 4;
+}
+
+.map-graticule text {
+  fill: rgba(54, 83, 94, 0.55);
+  font-family: Inter, "SF Pro Text", "PingFang SC", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.province-area {
+  stroke: rgba(53, 104, 132, 0.52);
+  stroke-width: 0.58;
+}
+
+.province-area.is-active {
+  stroke: #c96f18;
+  stroke-width: 1.35;
+  filter: none;
+}
+
+.province-boundaries path {
+  stroke: rgba(42, 89, 119, 0.72);
+  stroke-width: 0.76;
+}
+
+.province-boundaries path.is-active {
+  stroke: #c96f18;
+  stroke-width: 1.65;
+  filter: none;
+  animation: none;
+}
+
+.city-boundaries {
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.city-boundaries.is-ready {
+  opacity: 1;
+}
+
+.city-boundaries path {
+  stroke: rgba(52, 101, 125, 0.3);
+  stroke-width: 0.4;
+}
+
+.province-project-ring,
+.province-project-core,
+.province-project-links line {
+  animation: none;
+}
+
+.province-project-ring {
+  opacity: 0.5;
+}
+
+.selected-anchor {
+  background: #d97813;
+  box-shadow: 0 0 0 4px rgba(217, 120, 19, 0.16);
+}
+
+.map-help {
+  bottom: 74px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(25, 58, 69, 0.09);
+}
+
+.map-scale-bar {
+  position: absolute;
+  left: 22px;
+  bottom: 19px;
+  z-index: 17;
+  width: 132px;
+  color: #5d7078;
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.map-scale-bar div {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 1px 4px;
+}
+
+.map-scale-bar i {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 7px;
+  border: 1px solid #607982;
+  border-top: 0;
+}
+
+.map-scale-bar i::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 6px;
+  border-left: 1px solid #607982;
+}
+
+.map-scale-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 84px;
+  justify-content: center;
+}
+
+.map-scale-indicator.is-locked {
+  border-color: rgba(15, 98, 95, 0.34);
+  background: rgba(250, 253, 253, 0.97);
+}
+
+.search-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+}
+
+.project-row {
+  border-bottom: 1px solid rgba(222, 231, 234, 0.72);
+  border-radius: 5px;
+}
+
+.project-row.is-active {
+  border-top-color: #b4d7d3;
+  border-right-color: #b4d7d3;
+  border-bottom-color: #b4d7d3;
+  border-left-width: 3px;
+  background: linear-gradient(90deg, #edf7f5, #f7fbfb);
+}
+
+.project-row:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: -2px;
+}
+
+.theme-night .map-graticule line {
+  stroke: rgba(150, 199, 211, 0.1);
+}
+
+.theme-night .map-graticule text,
+.theme-night .map-scale-bar {
+  fill: rgba(196, 222, 228, 0.6);
+  color: rgba(196, 222, 228, 0.7);
+}
+
+.theme-night .map-scale-bar i,
+.theme-night .map-scale-bar i::after {
+  border-color: rgba(196, 222, 228, 0.56);
+}
+
+@media (max-width: 780px) {
+  .map-help {
+    bottom: calc(var(--mobile-drawer-height) + 10px);
+  }
+
+  .map-scale-bar {
+    display: none;
+  }
+}
+
 @media (max-width: 520px) {
   .brand-mark {
     width: 34px;
@@ -2162,5 +2343,50 @@ p {
 
   .workspace.is-mobile .focus-card {
     display: none;
+  }
+}
+
+/* Final precision overrides stay after the map-first responsive system. */
+.stage,
+.map-water {
+  background: #f1f7f9;
+  fill: #f1f7f9;
+}
+
+.province-area {
+  stroke: rgba(53, 104, 132, 0.52);
+  stroke-width: 0.58;
+}
+
+.province-boundaries path {
+  stroke: rgba(42, 89, 119, 0.72);
+  stroke-width: 0.76;
+}
+
+.city-boundaries path {
+  stroke: rgba(52, 101, 125, 0.3);
+  stroke-width: 0.4;
+}
+
+.map-help {
+  bottom: 74px;
+}
+
+.project-row {
+  border-bottom: 1px solid rgba(222, 231, 234, 0.72);
+  border-radius: 5px;
+}
+
+.project-row.is-active {
+  border-top-color: #b4d7d3;
+  border-right-color: #b4d7d3;
+  border-bottom-color: #b4d7d3;
+  border-left-width: 3px;
+  background: linear-gradient(90deg, #edf7f5, #f7fbfb);
+}
+
+@media (max-width: 780px) {
+  .map-help {
+    bottom: calc(var(--mobile-drawer-height) + 10px);
   }
 }

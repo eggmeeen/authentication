@@ -1,20 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Building2, ChevronDown, ChevronUp, CircleHelp, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, MapPin, Minus, MousePointer2, Plus, RotateCcw, Search, Sun, Moon, X } from "lucide-react";
-import type { ChinaMapDataset, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
+import { Building2, ChevronDown, ChevronUp, CircleHelp, Database, FileText, Layers3, ListFilter, Loader2, LocateFixed, LockKeyhole, MapPin, Minus, MousePointer2, Plus, RotateCcw, Search, Sun, Moon, X } from "lucide-react";
+import type { ChinaMapDataset, ChinaMapDetailDataset, ChinaMapPath, CoordinateMode, Coord, MapPoint, ProjectDataset, ProjectRecord, ThemeMode } from "./types";
 
 const PROVINCE_COLORS = [
-  "#d8eee7",
-  "#f6dfb3",
-  "#d9e7fb",
-  "#eadcf8",
-  "#ccece2",
-  "#f7d8c7",
-  "#dbe8c3",
-  "#f1d4dd",
-  "#cfe8ef",
-  "#f6e7af",
+  "#edf5f3",
+  "#f5f3ec",
+  "#edf3f6",
+  "#f3f0f5",
+  "#eaf4f0",
+  "#f6f1ed",
+  "#f0f4ea",
+  "#f5eff2",
+  "#ebf3f5",
+  "#f5f3e9",
 ];
+
+const cityDetailCache = new Map<string, ChinaMapPath[]>();
 
 const NIGHT_PROVINCE_COLORS = [
   "#123c3a",
@@ -185,13 +187,6 @@ interface ScreenViewport {
   height: number;
 }
 
-interface BoundsBox {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
 interface MapLabel {
   id: string;
   kind: "province" | "city" | "company";
@@ -206,28 +201,11 @@ interface MapLabel {
   active?: boolean;
 }
 
-interface RoadSegment {
-  id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
 interface ProjectHighlightPoint {
   id: number;
   x: number;
   y: number;
   selected: boolean;
-}
-
-interface ProjectConnection {
-  id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  kind: "same-province" | "adjacent-province";
 }
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
@@ -236,35 +214,6 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
 
 function boxesOverlap(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-function pathBounds(path: string): BoundsBox | null {
-  const values = path.match(/-?\d+(?:\.\d+)?/g);
-  if (!values || values.length < 2) return null;
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  for (let index = 0; index < values.length - 1; index += 2) {
-    const x = Number(values[index]);
-    const y = Number(values[index + 1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
-  return { minX, minY, maxX, maxY };
-}
-
-function boundsTouch(a: BoundsBox, b: BoundsBox, padding = 12): boolean {
-  return !(
-    a.maxX + padding < b.minX ||
-    b.maxX + padding < a.minX ||
-    a.maxY + padding < b.minY ||
-    b.maxY + padding < a.minY
-  );
 }
 
 function renderedViewport(sourceViewBox: MapViewBox, size: { width: number; height: number }): ScreenViewport {
@@ -306,7 +255,11 @@ function ChinaMapCanvas({
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
   const [showMapHelp, setShowMapHelp] = useState(true);
+  const [detailCityPaths, setDetailCityPaths] = useState<ChinaMapPath[]>([]);
+  const [detailLoadState, setDetailLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const viewBoxRef = useRef(viewBox);
+  const targetViewBoxRef = useRef(viewBox);
+  const selectedProjectIdRef = useRef<number | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const gestureScaleRef = useRef(1);
   const animationFrameRef = useRef<number | null>(null);
@@ -333,6 +286,8 @@ function ChinaMapCanvas({
   }, [viewBox]);
 
   useEffect(() => {
+    viewBoxRef.current = fullViewBox;
+    targetViewBoxRef.current = fullViewBox;
     setViewBox(fullViewBox);
   }, [fullViewBox]);
 
@@ -386,16 +341,6 @@ function ChinaMapCanvas({
     return counts;
   }, [projects]);
 
-  const projectCityNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const project of projects) {
-      const province = normalizeProvinceName(project.province);
-      names.add(`${province}|${project.displayCity}`);
-      names.add(`${province}|${project.displayCityLabel}`);
-    }
-    return names;
-  }, [projects]);
-
   const currentScale = fullViewBox.width / viewBox.width;
   const labelScale = currentScale;
   const showProvinceCounts = currentScale <= 1.18;
@@ -403,6 +348,46 @@ function ChinaMapCanvas({
   const pxPerMapUnit = mapViewport.width / viewBox.width;
   const provinceFill = theme === "night" ? NIGHT_PROVINCE_COLORS : PROVINCE_COLORS;
   const activeProvince = selectedProvince ?? (selectedProject ? normalizeProvinceName(selectedProject.province) : null);
+
+  useEffect(() => {
+    const provinceCode = activeProvince ? mapData.provinces.find((province) => province.name === activeProvince)?.code : undefined;
+    if (!provinceCode) {
+      setDetailCityPaths([]);
+      setDetailLoadState("idle");
+      return;
+    }
+    const cached = cityDetailCache.get(provinceCode);
+    if (cached) {
+      setDetailCityPaths(cached);
+      setDetailLoadState("ready");
+      return;
+    }
+    const controller = new AbortController();
+    const template = mapData.metadata.detailPathTemplate ?? "data/city-maps/{code}.json";
+    setDetailLoadState("loading");
+    fetch(`${import.meta.env.BASE_URL}${template.replace("{code}", provinceCode)}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`行政区细节加载失败：${response.status}`);
+        return response.json() as Promise<ChinaMapDetailDataset>;
+      })
+      .then((detail) => {
+        cityDetailCache.set(provinceCode, detail.paths);
+        setDetailCityPaths(detail.paths);
+        setDetailLoadState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setDetailCityPaths([]);
+        setDetailLoadState("error");
+      });
+    return () => controller.abort();
+  }, [activeProvince, mapData.metadata.detailPathTemplate, mapData.provinces]);
+
+  const graticule = useMemo(() => {
+    const longitudes = [80, 90, 100, 110, 120, 130].map((value) => ({ value, x: projectCoord({ lng: value, lat: 30 }, mapData).x }));
+    const latitudes = [20, 30, 40, 50].map((value) => ({ value, y: projectCoord({ lng: 110, lat: value }, mapData).y }));
+    return { longitudes, latitudes };
+  }, [mapData]);
 
   const provinceCountLabels = useMemo(() => {
     if (!showProvinceCounts) return [];
@@ -469,6 +454,7 @@ function ChinaMapCanvas({
       cancelViewAnimation();
       const from = viewBoxRef.current;
       const to = clampViewBox(target, fullViewBox);
+      targetViewBoxRef.current = to;
       const start = performance.now();
       const frame = (now: number) => {
         const progress = Math.min(1, (now - start) / duration);
@@ -492,6 +478,7 @@ function ChinaMapCanvas({
       cancelViewAnimation();
       const clamped = clampViewBox(next, fullViewBox);
       viewBoxRef.current = clamped;
+      targetViewBoxRef.current = clamped;
       setViewBox(clamped);
     },
     [cancelViewAnimation, fullViewBox],
@@ -499,7 +486,7 @@ function ChinaMapCanvas({
 
   const zoomAt = useCallback(
     (factor: number, screenX: number, screenY: number, duration = 0) => {
-      const current = viewBoxRef.current;
+      const current = animationFrameRef.current === null ? viewBoxRef.current : targetViewBoxRef.current;
       const mapPoint = screenToMap(screenX, screenY, current);
       const currentViewport = renderedViewport(current, viewportSize);
       const anchorX = (screenX - currentViewport.x) / currentViewport.width;
@@ -561,13 +548,16 @@ function ChinaMapCanvas({
 
   useEffect(() => {
     if (!selectedPoint) {
+      selectedProjectIdRef.current = null;
       return;
     }
     setSelectedProvince(normalizeProvinceName(selectedProject?.province ?? ""));
-    const current = viewBoxRef.current;
-    const desiredScale = Math.min(6, Math.max(3.2, fullViewBox.width / current.width));
-    const focusWidth = fullViewBox.width / desiredScale;
-    const focusHeight = fullViewBox.height / desiredScale;
+    const current = selectedProjectIdRef.current === null ? viewBoxRef.current : targetViewBoxRef.current;
+    const isProjectSwitch = selectedProjectIdRef.current !== null;
+    const desiredScale = Math.max(3.2, fullViewBox.width / current.width);
+    const focusWidth = isProjectSwitch ? current.width : fullViewBox.width / desiredScale;
+    const focusHeight = isProjectSwitch ? current.height : fullViewBox.height / desiredScale;
+    selectedProjectIdRef.current = selectedProject?.id ?? null;
     const target = clampViewBox(
       {
         x: selectedPoint.x - focusWidth / 2,
@@ -587,71 +577,6 @@ function ChinaMapCanvas({
     [viewportSize, zoomAt],
   );
 
-  const roadSegments = useMemo<RoadSegment[]>(() => {
-    const projectCities = mapData.cities.filter(
-      (city) => projectCityNames.has(`${city.province}|${city.name}`) || projectCityNames.has(`${city.province}|${city.fullname}`),
-    );
-    const segments = new Map<string, RoadSegment>();
-    for (const city of projectCities) {
-      const neighbors = projectCities
-        .filter((candidate) => candidate !== city && candidate.province === city.province)
-        .map((candidate) => ({ city: candidate, distance: distance(city, candidate) }))
-        .filter((item) => item.distance < 120)
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 2);
-      for (const neighbor of neighbors) {
-        const key = [city.fullname, neighbor.city.fullname].sort().join("|");
-        if (!segments.has(key)) {
-          segments.set(key, {
-            id: key,
-            x1: city.x,
-            y1: city.y,
-            x2: neighbor.city.x,
-            y2: neighbor.city.y,
-          });
-        }
-      }
-    }
-    return Array.from(segments.values());
-  }, [mapData.cities, projectCityNames]);
-
-  const provinceNeighbors = useMemo(() => {
-    const projectProvinceSet = new Set(projects.map((project) => normalizeProvinceName(project.province)));
-    const provinceEntries = mapData.provinces
-      .filter((province) => projectProvinceSet.has(province.name))
-      .map((province) => ({
-        name: province.name,
-        label: province.label,
-        bounds: pathBounds(province.path),
-      }))
-      .filter((province): province is { name: string; label: { x: number; y: number }; bounds: BoundsBox } => Boolean(province.bounds));
-
-    const neighbors = new Map<string, Array<{ name: string; distance: number }>>();
-    for (const province of provinceEntries) {
-      neighbors.set(province.name, []);
-    }
-
-    for (let index = 0; index < provinceEntries.length; index += 1) {
-      for (let nextIndex = index + 1; nextIndex < provinceEntries.length; nextIndex += 1) {
-        const a = provinceEntries[index];
-        const b = provinceEntries[nextIndex];
-        const labelDistance = distance(a.label, b.label);
-        if (!boundsTouch(a.bounds, b.bounds, 16) || labelDistance > 320) continue;
-        neighbors.get(a.name)?.push({ name: b.name, distance: labelDistance });
-        neighbors.get(b.name)?.push({ name: a.name, distance: labelDistance });
-      }
-    }
-
-    return new Map(
-      Array.from(neighbors.entries()).map(([name, items]) => [
-        name,
-        items
-          .sort((a, b) => a.distance - b.distance)
-          .map((item) => item.name),
-      ]),
-    );
-  }, [mapData.provinces, projects]);
-
   const provinceProjectHighlights = useMemo<ProjectHighlightPoint[]>(() => {
     if (!activeProvince) return [];
     return projects
@@ -668,55 +593,6 @@ function ChinaMapCanvas({
       })
       .filter((point): point is ProjectHighlightPoint => Boolean(point));
   }, [activeProvince, projectDisplayPoints, projects, selectedProject]);
-
-  const provinceProjectConnections = useMemo<ProjectConnection[]>(() => {
-    if (!selectedProject || !selectedPoint) return [];
-
-    const connections: ProjectConnection[] = [];
-    const selectedProvinceName = normalizeProvinceName(selectedProject.province);
-
-    for (const point of provinceProjectHighlights) {
-      if (point.id === selectedProject.id) continue;
-      connections.push({
-        id: `province-${selectedProject.id}-${point.id}`,
-        x1: selectedPoint.x,
-        y1: selectedPoint.y,
-        x2: point.x,
-        y2: point.y,
-        kind: "same-province",
-      });
-    }
-
-    const adjacentCandidates = (provinceNeighbors.get(selectedProvinceName) ?? [])
-      .map((provinceName) => {
-        const nearest = projects
-          .filter((project) => normalizeProvinceName(project.province) === provinceName)
-          .map((project) => {
-            const point = projectDisplayPoints.get(project.id);
-            if (!point) return null;
-            return { projectId: project.id, point, distance: distance(point, selectedPoint) };
-          })
-          .filter((item): item is { projectId: number; point: ScreenPoint; distance: number } => Boolean(item))
-          .sort((a, b) => a.distance - b.distance)[0];
-        if (!nearest) return null;
-        return {
-          id: `adjacent-${selectedProject.id}-${nearest.projectId}`,
-          x1: selectedPoint.x,
-          y1: selectedPoint.y,
-          x2: nearest.point.x,
-          y2: nearest.point.y,
-          kind: "adjacent-province" as const,
-          distance: nearest.distance,
-        };
-      })
-      .filter((item): item is { id: string; x1: number; y1: number; x2: number; y2: number; kind: "adjacent-province"; distance: number } => Boolean(item))
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, 6)
-      .map(({ distance: _distance, ...connection }) => connection);
-
-    connections.push(...adjacentCandidates);
-    return connections;
-  }, [projectDisplayPoints, projects, provinceNeighbors, provinceProjectHighlights, selectedPoint, selectedProject]);
 
   const nearbyProjects = useMemo(() => {
     if (!selectedPoint || !selectedProject) return [];
@@ -989,11 +865,6 @@ function ChinaMapCanvas({
         onPointerCancel={onPointerUp}
       >
         <defs>
-          <linearGradient id="provinceHighlight" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#f97316" />
-            <stop offset="50%" stopColor="#facc15" />
-            <stop offset="100%" stopColor="#22d3ee" />
-          </linearGradient>
           <radialGradient id="provinceProjectGlow" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#67e8f9" stopOpacity="0.98" />
             <stop offset="44%" stopColor="#22d3ee" stopOpacity="0.72" />
@@ -1001,6 +872,22 @@ function ChinaMapCanvas({
           </radialGradient>
         </defs>
         <rect className="map-water" x="0" y="0" width={fullViewBox.width} height={fullViewBox.height} />
+        {currentScale <= 1.25 && (
+          <g className="map-graticule" aria-hidden="true">
+            {graticule.longitudes.map((item) => (
+              <g key={`lng-${item.value}`}>
+                <line x1={item.x} y1="0" x2={item.x} y2={fullViewBox.height} />
+                <text x={item.x + 4 / pxPerMapUnit} y={fullViewBox.height - 18 / pxPerMapUnit} fontSize={10 / pxPerMapUnit}>{item.value}°E</text>
+              </g>
+            ))}
+            {graticule.latitudes.map((item) => (
+              <g key={`lat-${item.value}`}>
+                <line x1="0" y1={item.y} x2={fullViewBox.width} y2={item.y} />
+                <text x={fullViewBox.width - 38 / pxPerMapUnit} y={item.y - 5 / pxPerMapUnit} fontSize={10 / pxPerMapUnit}>{item.value}°N</text>
+              </g>
+            ))}
+          </g>
+        )}
         <g className="province-fills">
           {mapData.provinces.map((province) => (
             <path
@@ -1014,27 +901,9 @@ function ChinaMapCanvas({
             />
           ))}
         </g>
-        {activeProvince && (
-          <g className="province-glow" aria-hidden="true">
-            {mapData.provinces
-              .filter((province) => province.name === activeProvince)
-              .map((province) => (
-                <g key={`${province.code}-glow`}>
-                  <path className="province-glow-ring ring-one" d={province.path} />
-                  <path className="province-glow-ring ring-two" d={province.path} />
-                  <path className="province-glow-core" d={province.path} />
-                </g>
-              ))}
-          </g>
-        )}
-        <g className="city-boundaries">
-          {mapData.cityPaths.map((city, index) => (
+        <g className={`city-boundaries ${detailLoadState === "ready" ? "is-ready" : ""}`}>
+          {detailCityPaths.map((city, index) => (
             <path key={`${city.province}-${city.name}-${index}`} d={city.path} />
-          ))}
-        </g>
-        <g className="road-lines">
-          {roadSegments.map((segment) => (
-            <line key={segment.id} x1={segment.x1} y1={segment.y1} x2={segment.x2} y2={segment.y2} />
           ))}
         </g>
         <g className="province-boundaries">
@@ -1053,20 +922,6 @@ function ChinaMapCanvas({
             />
           ))}
         </g>
-        {provinceProjectConnections.length > 0 && (
-          <g className="province-project-links" aria-hidden="true">
-            {provinceProjectConnections.map((connection) => (
-              <line
-                key={connection.id}
-                className={connection.kind === "adjacent-province" ? "is-adjacent" : "is-same-province"}
-                x1={connection.x1}
-                y1={connection.y1}
-                x2={connection.x2}
-                y2={connection.y2}
-              />
-            ))}
-          </g>
-        )}
         {provinceProjectHighlights.length > 0 && (
           <g className="province-project-highlights">
             {provinceProjectHighlights.map((point) => {
@@ -1204,7 +1059,15 @@ function ChinaMapCanvas({
         )}
       </div>
 
-      <div className="map-scale-indicator">{currentScale < 1.2 ? "全国" : currentScale < 2.4 ? "区域" : currentScale < 4.5 ? "城市" : "项目"} · {Math.round(currentScale * 100)}%</div>
+      <div className="map-scale-bar" aria-hidden="true">
+        <div><span>0</span><span>250</span><span>500 km</span></div>
+        <i />
+      </div>
+
+      <div className={`map-scale-indicator ${selectedProject ? "is-locked" : ""}`} title={selectedProject ? "切换项目时保持当前缩放倍数" : undefined}>
+        {detailLoadState === "loading" ? <Loader2 className="spin" size={13} /> : selectedProject ? <LockKeyhole size={13} /> : null}
+        {currentScale < 1.2 ? "全国" : currentScale < 2.4 ? "区域" : currentScale < 4.5 ? "城市" : "项目"} · {Math.round(currentScale * 100)}%
+      </div>
       <div className="map-controls" aria-label="地图缩放">
         <button type="button" onClick={() => zoom(0.66)} aria-label="放大地图">
           <Plus size={18} />
@@ -1241,6 +1104,7 @@ export default function App() {
   const [dataset, setDataset] = useState<ProjectDataset | null>(null);
   const [mapData, setMapData] = useState<ChinaMapDataset | null>(null);
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [coordinateMode, setCoordinateMode] = useState<CoordinateMode>("city");
   const [theme, setTheme] = useState<ThemeMode>("day");
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -1282,10 +1146,11 @@ export default function App() {
 
   const filteredProjects = useMemo(() => {
     if (!dataset) return [];
-    return dataset.projects.filter((project) => projectMatches(project, query));
-  }, [dataset, query]);
+    return dataset.projects.filter((project) => projectMatches(project, deferredQuery));
+  }, [dataset, deferredQuery]);
 
-  const visibleProjects = query.trim() ? filteredProjects : dataset?.projects ?? [];
+  const visibleProjects = deferredQuery.trim() ? filteredProjects : dataset?.projects ?? [];
+  const isSearchPending = query !== deferredQuery;
 
   const selectedProject = useMemo(() => {
     if (!dataset || !selectedProjectId) return null;
@@ -1376,13 +1241,16 @@ export default function App() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && filteredProjects.length) onSelectProject(filteredProjects[0].id);
+                  if (event.key === "Enter") {
+                    const firstMatch = dataset.projects.find((project) => projectMatches(project, query));
+                    if (firstMatch) onSelectProject(firstMatch.id);
+                  }
                   if (event.key === "Escape") clearSearch();
                 }}
                 placeholder="搜索编号、公司、城市、地址"
                 aria-label="搜索编号、公司、城市、地址"
               />
-              {query && <span className="search-count">{filteredProjects.length} 条</span>}
+              {query && <span className="search-count">{isSearchPending ? <Loader2 className="spin" size={13} /> : `${filteredProjects.length} 条`}</span>}
               {query && (
                 <button className="ghost-button" type="button" onClick={clearSearch}>
                   清除
@@ -1461,6 +1329,8 @@ export default function App() {
                   className={`project-row ${project.id === selectedProject?.id ? "is-active" : ""}`}
                   type="button"
                   key={project.id}
+                  aria-pressed={project.id === selectedProject?.id}
+                  data-project-id={project.id}
                   onClick={() => onSelectProject(project.id)}
                 >
                   <span className="row-top">

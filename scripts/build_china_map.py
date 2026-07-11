@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "data" / "source" / "geojson-cn"
 PROJECTS_PATH = ROOT / "public" / "data" / "projects.json"
 PUBLIC_PATH = ROOT / "public" / "data" / "china-map.json"
+CITY_MAP_DIR = ROOT / "public" / "data" / "city-maps"
 
 WIDTH = 1000
 PADDING = 28
@@ -101,18 +103,20 @@ def main() -> None:
         x, y = mercator(lng, lat)
         return round(PADDING + (x - min_x) * scale, 2), round(y_offset + (max_y - y) * scale, 2)
 
-    def ring_to_path(ring: list[list[float]], tolerance: float) -> str:
+    def ring_to_path(ring: list[list[float]], tolerance: float, precision: int = 1) -> str:
         points = [project(point[0], point[1]) for point in ring]
         points = simplify(points, tolerance)
         if len(points) < 3:
             return ""
         head = points[0]
-        body = " ".join(f"L{point[0]:.1f},{point[1]:.1f}" for point in points[1:])
-        return f"M{head[0]:.1f},{head[1]:.1f} {body} Z"
+        body = " ".join(f"L{point[0]:.{precision}f},{point[1]:.{precision}f}" for point in points[1:])
+        return f"M{head[0]:.{precision}f},{head[1]:.{precision}f} {body} Z"
 
     provinces: list[dict[str, Any]] = []
     cities: list[dict[str, Any]] = []
-    city_paths: list[dict[str, Any]] = []
+    if CITY_MAP_DIR.exists():
+        shutil.rmtree(CITY_MAP_DIR)
+    CITY_MAP_DIR.mkdir(parents=True, exist_ok=True)
 
     for index, feature in enumerate(country["features"]):
         properties = feature["properties"]
@@ -123,7 +127,7 @@ def main() -> None:
         center = properties.get("center") or [0, 0]
         # Keep enough geometry for close zooms. The previous tolerances were tuned
         # for a thumbnail-sized map and produced visibly angular borders.
-        path = " ".join(filter(None, (ring_to_path(ring, 0.18) for ring in geometry_rings(feature))))
+        path = " ".join(filter(None, (ring_to_path(ring, 0.10, 2) for ring in geometry_rings(feature))))
         label_x, label_y = project(center[0], center[1])
         provinces.append(
             {
@@ -141,6 +145,7 @@ def main() -> None:
         if not province_file.exists():
             continue
         province_geojson = load_json(province_file)
+        province_city_paths: list[dict[str, Any]] = []
         for city in province_geojson.get("features", []):
             city_props = city["properties"]
             city_center = city_props.get("center") or center
@@ -154,9 +159,20 @@ def main() -> None:
                     "y": city_y,
                 }
             )
-            city_path = " ".join(filter(None, (ring_to_path(ring, 0.32) for ring in geometry_rings(city))))
+            city_path = " ".join(filter(None, (ring_to_path(ring, 0.06, 2) for ring in geometry_rings(city))))
             if city_path:
-                city_paths.append({"province": name, "name": city_props["name"], "path": city_path})
+                province_city_paths.append({"province": name, "name": city_props["name"], "path": city_path})
+
+        detail_payload = {
+            "province": name,
+            "code": properties["code"],
+            "precision": "high",
+            "paths": province_city_paths,
+        }
+        (CITY_MAP_DIR / f"{properties['code']}.json").write_text(
+            json.dumps(detail_payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
 
     payload = {
         "metadata": {
@@ -176,9 +192,10 @@ def main() -> None:
             },
             "provinceCount": len(provinces),
             "cityCount": len(cities),
+            "detailPathTemplate": "data/city-maps/{code}.json",
         },
         "provinces": provinces,
-        "cityPaths": city_paths,
+        "cityPaths": [],
         "cities": cities,
     }
     PUBLIC_PATH.parent.mkdir(parents=True, exist_ok=True)

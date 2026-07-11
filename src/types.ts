@@ -116,8 +116,16 @@ export interface ChinaMapDataset {
     };
     provinceCount: number;
     cityCount: number;
+    detailPathTemplate?: string;
   };
   provinces: ChinaMapProvince[];
   cityPaths: ChinaMapPath[];
   cities: ChinaMapCity[];
+}
+
+export interface ChinaMapDetailDataset {
+  province: string;
+  code: string;
+  precision: "high";
+  paths: ChinaMapPath[];
 }
