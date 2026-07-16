@@ -5,8 +5,8 @@ import {
   Color,
   DoubleSide,
   ExtrudeGeometry,
+  Group,
   InstancedMesh,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -19,6 +19,12 @@ import { CircleHelp, LocateFixed, Minus, MousePointer2, Plus, RotateCcw, X } fro
 import type { ChinaMapDataset, ChinaMapProvince, CoordinateMode, Coord, ProjectRecord, ThemeMode } from "./types";
 
 const MAP_SCALE = 0.0182;
+const MAX_ZOOM = 20;
+const MAX_CAMERA_DISTANCE = 92;
+
+function overviewDistanceForAspect(aspect: number) {
+  return Math.min(84, Math.max(35, (35 * 0.95) / Math.max(0.42, aspect)));
+}
 
 interface WebGLMapProps {
   projects: ProjectRecord[];
@@ -203,6 +209,7 @@ function ProjectInstances({
 }) {
   const meshRef = useRef<InstancedMesh>(null);
   const materialRef = useRef<MeshBasicMaterial>(null);
+  const lastMarkerScaleRef = useRef(1);
   const dummy = useMemo(() => new Object3D(), []);
   const [hovered, setHovered] = useState<number | null>(null);
   const locatedProjects = useMemo(
@@ -224,9 +231,24 @@ function ProjectInstances({
     meshRef.current.computeBoundingSphere();
   }, [dummy, locatedProjects]);
 
-  useFrame(({ clock }) => {
-    if (!materialRef.current || reducedMotion) return;
-    materialRef.current.opacity = 0.78 + Math.sin(clock.elapsedTime * 1.35) * 0.16;
+  useFrame(({ camera, clock, size }) => {
+    const overviewDistance = overviewDistanceForAspect(size.width / Math.max(1, size.height));
+    const markerScale = Math.max(0.18, Math.min(1, Math.abs(camera.position.z) / overviewDistance));
+
+    if (meshRef.current && Math.abs(markerScale - lastMarkerScaleRef.current) > 0.012) {
+      locatedProjects.forEach(({ position }, index) => {
+        dummy.position.copy(position);
+        dummy.scale.setScalar(markerScale);
+        dummy.updateMatrix();
+        meshRef.current?.setMatrixAt(index, dummy.matrix);
+      });
+      meshRef.current.instanceMatrix.needsUpdate = true;
+      lastMarkerScaleRef.current = markerScale;
+    }
+
+    if (materialRef.current && !reducedMotion) {
+      materialRef.current.opacity = 0.78 + Math.sin(clock.elapsedTime * 1.35) * 0.16;
+    }
   });
 
   if (!locatedProjects.length) return null;
@@ -268,6 +290,7 @@ function SelectedBeacon({
   reducedMotion: boolean;
   onClearSelection: () => void;
 }) {
+  const groupRef = useRef<Group>(null);
   const ringRef = useRef<Mesh>(null);
   const ringMaterialRef = useRef<MeshBasicMaterial>(null);
   const position = useMemo(
@@ -275,18 +298,23 @@ function SelectedBeacon({
     [coordinateMode, mapData, project],
   );
 
-  useFrame(({ clock }) => {
-    if (!ringRef.current || !ringMaterialRef.current || reducedMotion) return;
-    const progress = (clock.elapsedTime * 0.56) % 1;
-    ringRef.current.scale.setScalar(0.65 + progress * 1.9);
-    ringMaterialRef.current.opacity = 0.72 * (1 - progress);
+  useFrame(({ camera, clock, size }) => {
+    const overviewDistance = overviewDistanceForAspect(size.width / Math.max(1, size.height));
+    const beaconScale = Math.max(0.18, Math.min(1, Math.abs(camera.position.z) / overviewDistance));
+    groupRef.current?.scale.setScalar(beaconScale);
+
+    if (ringRef.current && ringMaterialRef.current && !reducedMotion) {
+      const progress = (clock.elapsedTime * 0.56) % 1;
+      ringRef.current.scale.setScalar(0.65 + progress * 1.9);
+      ringMaterialRef.current.opacity = 0.72 * (1 - progress);
+    }
   });
 
   if (!project || !position) return null;
   const accent = theme === "night" ? "#a5ffbd" : "#ff5d35";
 
   return (
-    <group position={position}>
+    <group ref={groupRef} position={position}>
       <mesh>
         <sphereGeometry args={[0.105, 16, 16]} />
         <meshBasicMaterial color={accent} toneMapped={false} />
@@ -398,6 +426,7 @@ function CameraRig({
   mapData,
   command,
   reducedMotion,
+  onZoomChange,
 }: {
   selectedProject: ProjectRecord | null;
   selectedProvince: string | null;
@@ -405,11 +434,14 @@ function CameraRig({
   mapData: ChinaMapDataset;
   command: ViewCommand;
   reducedMotion: boolean;
+  onZoomChange: (zoom: number) => void;
 }) {
   const controlsRef = useRef<React.ElementRef<typeof MapControls>>(null);
   const { camera, size } = useThree();
   const aspect = size.width / Math.max(1, size.height);
-  const resetDistance = Math.min(84, Math.max(35, (35 * 0.95) / Math.max(0.42, aspect)));
+  const resetDistance = overviewDistanceForAspect(aspect);
+  const minDistance = resetDistance / MAX_ZOOM;
+  const lastZoomRef = useRef(1);
   const animationRef = useRef<{
     progress: number;
     fromPosition: Vector3;
@@ -456,9 +488,9 @@ function CameraRig({
       return;
     }
     const relative = camera.position.clone().sub(target);
-    const factor = command.type === "in" ? 0.76 : 1.28;
-    const toPosition = target.clone().add(relative.multiplyScalar(factor));
-    toPosition.z = Math.max(18, Math.min(92, toPosition.z));
+    const factor = command.type === "in" ? 0.58 : 1.62;
+    const nextDistance = Math.max(minDistance, Math.min(MAX_CAMERA_DISTANCE, relative.length() * factor));
+    const toPosition = target.clone().add(relative.setLength(nextDistance));
     animationRef.current = {
       progress: 0,
       fromPosition: camera.position.clone(),
@@ -466,18 +498,28 @@ function CameraRig({
       fromTarget: target.clone(),
       toTarget: target,
     };
-  }, [camera, command, resetDistance]);
+  }, [camera, command, minDistance, resetDistance]);
 
   useFrame((_, delta) => {
     const animation = animationRef.current;
     const controls = controlsRef.current;
-    if (!animation || !controls) return;
-    animation.progress = reducedMotion ? 1 : Math.min(1, animation.progress + delta * 2.5);
-    const t = 1 - Math.pow(1 - animation.progress, 3);
-    camera.position.lerpVectors(animation.fromPosition, animation.toPosition, t);
-    controls.target.lerpVectors(animation.fromTarget, animation.toTarget, t);
-    controls.update();
-    if (animation.progress >= 1) animationRef.current = null;
+    if (!controls) return;
+
+    if (animation) {
+      animation.progress = reducedMotion ? 1 : Math.min(1, animation.progress + delta * 2.5);
+      const t = 1 - Math.pow(1 - animation.progress, 3);
+      camera.position.lerpVectors(animation.fromPosition, animation.toPosition, t);
+      controls.target.lerpVectors(animation.fromTarget, animation.toTarget, t);
+      controls.update();
+      if (animation.progress >= 1) animationRef.current = null;
+    }
+
+    const zoom = Math.min(MAX_ZOOM, Math.max(0.1, resetDistance / camera.position.distanceTo(controls.target)));
+    const roundedZoom = Math.round(zoom * 10) / 10;
+    if (Math.abs(roundedZoom - lastZoomRef.current) >= 0.1) {
+      lastZoomRef.current = roundedZoom;
+      onZoomChange(roundedZoom);
+    }
   });
 
   return (
@@ -486,8 +528,10 @@ function CameraRig({
       enableRotate={false}
       enableDamping={!reducedMotion}
       dampingFactor={0.08}
-      minDistance={18}
-      maxDistance={92}
+      minDistance={minDistance}
+      maxDistance={MAX_CAMERA_DISTANCE}
+      zoomSpeed={1.4}
+      zoomToCursor
       screenSpacePanning
     />
   );
@@ -505,11 +549,13 @@ function Scene({
   onSelectProvince,
   onSelectProject,
   onClearSelection,
+  onZoomChange,
 }: WebGLMapProps & {
   selectedProvince: string | null;
   command: ViewCommand;
   reducedMotion: boolean;
   onSelectProvince: (name: string) => void;
+  onZoomChange: (zoom: number) => void;
 }) {
   const night = theme === "night";
   return (
@@ -525,7 +571,7 @@ function Scene({
       <ProjectInstances projects={projects} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
       <SelectedBeacon project={selectedProject} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onClearSelection={onClearSelection} />
       <ProvinceLabels mapData={mapData} selectedProvince={selectedProvince} />
-      <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} />
+      <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} />
     </>
   );
 }
@@ -557,6 +603,7 @@ export default function WebGLMap(props: WebGLMapProps) {
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
   const [command, setCommand] = useState<ViewCommand>({ id: 0, type: "reset" });
+  const [zoomLevel, setZoomLevel] = useState(1);
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const canRenderWebGL = useMemo(webGLAvailable, []);
 
@@ -590,6 +637,7 @@ export default function WebGLMap(props: WebGLMapProps) {
             selectedProvince={selectedProvince}
             command={command}
             reducedMotion={reducedMotion}
+            onZoomChange={setZoomLevel}
             onSelectProvince={(name) => setSelectedProvince((current) => (current === name ? null : name))}
           />
         </Canvas>
@@ -605,7 +653,7 @@ export default function WebGLMap(props: WebGLMapProps) {
         </button>
         {showHelp && (
           <div className="map-help-body">
-            <span><MousePointer2 size={13} />拖拽移动 · 滚轮缩放</span>
+            <span><MousePointer2 size={13} />拖拽移动 · 滚轮缩放 · 最高 20×</span>
             <span><i className="legend-dot" />光点为项目，数字为省级数量</span>
             <span><i className="legend-label" />点击省域或项目进入聚焦视图</span>
           </div>
@@ -618,12 +666,12 @@ export default function WebGLMap(props: WebGLMapProps) {
       </div>
 
       <div className="map-controls" aria-label="地图缩放">
-        <button type="button" onClick={() => issueCommand("in")} aria-label="放大地图"><Plus size={18} /></button>
+        <button type="button" onClick={() => issueCommand("in")} aria-label="放大地图" title="放大地图（最高 20×）"><Plus size={18} /></button>
         <button type="button" onClick={() => issueCommand("out")} aria-label="缩小地图"><Minus size={18} /></button>
         <button type="button" onClick={() => issueCommand("reset")} aria-label="显示全国"><RotateCcw size={15} /> 全国</button>
       </div>
 
-      <div className="map-status"><span /> {selectedProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : "全国")} · WebGL</div>
+      <div className="map-status" aria-live="polite"><span /> {selectedProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : "全国")} · {zoomLevel.toFixed(1)}×</div>
     </div>
   );
 }
