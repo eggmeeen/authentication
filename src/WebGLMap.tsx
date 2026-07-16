@@ -1,6 +1,6 @@
 import { Html, MapControls, Sparkles, useCursor } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Color,
   DoubleSide,
@@ -21,6 +21,8 @@ import type { ChinaMapDataset, ChinaMapProvince, CoordinateMode, Coord, ProjectR
 const MAP_SCALE = 0.0182;
 const MAX_ZOOM = 20;
 const MAX_CAMERA_DISTANCE = 92;
+const COMPANY_LABEL_ZOOM = 4;
+const CLICK_DRAG_TOLERANCE = 5;
 
 function overviewDistanceForAspect(aspect: number) {
   return Math.min(84, Math.max(35, (35 * 0.95) / Math.max(0.42, aspect)));
@@ -39,6 +41,20 @@ interface WebGLMapProps {
 interface ViewCommand {
   id: number;
   type: "in" | "out" | "reset";
+}
+
+interface LocatedProject {
+  project: ProjectRecord;
+  position: Vector3;
+}
+
+interface ProjectLabelLayout extends LocatedProject {
+  side: "left" | "right";
+  offsetY: number;
+}
+
+function isIntentionalClick(event: ThreeEvent<MouseEvent>) {
+  return event.delta <= CLICK_DRAG_TOLERANCE;
 }
 
 function coordFor(project: ProjectRecord, mode: CoordinateMode): Coord | null {
@@ -133,8 +149,9 @@ function ProvinceMesh({
     <mesh
       ref={meshRef}
       geometry={geometry}
-      onClick={(event) => {
+      onClick={(event: ThreeEvent<MouseEvent>) => {
         event.stopPropagation();
+        if (!isIntentionalClick(event)) return;
         onSelect();
       }}
       onPointerEnter={(event) => {
@@ -193,56 +210,55 @@ function ProvinceLayer({
 }
 
 function ProjectInstances({
-  projects,
-  coordinateMode,
-  mapData,
+  locatedProjects,
   theme,
   reducedMotion,
   onSelectProject,
 }: {
-  projects: ProjectRecord[];
-  coordinateMode: CoordinateMode;
-  mapData: ChinaMapDataset;
+  locatedProjects: LocatedProject[];
   theme: ThemeMode;
   reducedMotion: boolean;
   onSelectProject: (projectId: number) => void;
 }) {
   const meshRef = useRef<InstancedMesh>(null);
+  const hitMeshRef = useRef<InstancedMesh>(null);
   const materialRef = useRef<MeshBasicMaterial>(null);
   const lastMarkerScaleRef = useRef(1);
   const dummy = useMemo(() => new Object3D(), []);
   const [hovered, setHovered] = useState<number | null>(null);
-  const locatedProjects = useMemo(
-    () => projects.map((project) => ({ project, position: projectWorldPoint(project, coordinateMode, mapData) })).filter((item): item is { project: ProjectRecord; position: Vector3 } => Boolean(item.position)),
-    [coordinateMode, mapData, projects],
-  );
   useCursor(hovered !== null);
 
   useLayoutEffect(() => {
-    if (!meshRef.current) return;
+    if (!meshRef.current || !hitMeshRef.current) return;
     locatedProjects.forEach(({ position }, index) => {
       dummy.position.copy(position);
       dummy.scale.setScalar(1);
       dummy.updateMatrix();
       meshRef.current?.setMatrixAt(index, dummy.matrix);
+      hitMeshRef.current?.setMatrixAt(index, dummy.matrix);
     });
     meshRef.current.count = locatedProjects.length;
+    hitMeshRef.current.count = locatedProjects.length;
     meshRef.current.instanceMatrix.needsUpdate = true;
+    hitMeshRef.current.instanceMatrix.needsUpdate = true;
     meshRef.current.computeBoundingSphere();
+    hitMeshRef.current.computeBoundingSphere();
   }, [dummy, locatedProjects]);
 
   useFrame(({ camera, clock, size }) => {
     const overviewDistance = overviewDistanceForAspect(size.width / Math.max(1, size.height));
     const markerScale = Math.max(0.18, Math.min(1, Math.abs(camera.position.z) / overviewDistance));
 
-    if (meshRef.current && Math.abs(markerScale - lastMarkerScaleRef.current) > 0.012) {
+    if (meshRef.current && hitMeshRef.current && Math.abs(markerScale - lastMarkerScaleRef.current) > 0.012) {
       locatedProjects.forEach(({ position }, index) => {
         dummy.position.copy(position);
         dummy.scale.setScalar(markerScale);
         dummy.updateMatrix();
         meshRef.current?.setMatrixAt(index, dummy.matrix);
+        hitMeshRef.current?.setMatrixAt(index, dummy.matrix);
       });
       meshRef.current.instanceMatrix.needsUpdate = true;
+      hitMeshRef.current.instanceMatrix.needsUpdate = true;
       lastMarkerScaleRef.current = markerScale;
     }
 
@@ -253,27 +269,172 @@ function ProjectInstances({
 
   if (!locatedProjects.length) return null;
 
+  const hoveredProject = hovered === null ? null : locatedProjects[hovered];
+
   return (
-    <instancedMesh
-      ref={meshRef}
-      args={[undefined, undefined, Math.max(1, locatedProjects.length)]}
-      onClick={(event: ThreeEvent<MouseEvent>) => {
-        event.stopPropagation();
-        if (event.instanceId === undefined) return;
-        const record = locatedProjects[event.instanceId];
-        if (record) onSelectProject(record.project.id);
-      }}
-      onPointerMove={(event: ThreeEvent<PointerEvent>) => {
-        event.stopPropagation();
-        setHovered(event.instanceId ?? null);
-      }}
-      onPointerOut={() => setHovered(null)}
-    >
-      <sphereGeometry args={[0.052, 9, 9]} />
-      <meshBasicMaterial ref={materialRef} color={theme === "night" ? "#83ff9d" : "#245dff"} transparent opacity={0.88} toneMapped={false} />
-    </instancedMesh>
+    <>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, Math.max(1, locatedProjects.length)]}>
+        <sphereGeometry args={[0.06, 9, 9]} />
+        <meshBasicMaterial ref={materialRef} color={theme === "night" ? "#83ff9d" : "#245dff"} transparent opacity={0.88} toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh
+        ref={hitMeshRef}
+        args={[undefined, undefined, Math.max(1, locatedProjects.length)]}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          event.stopPropagation();
+          if (!isIntentionalClick(event) || event.instanceId === undefined) return;
+          const record = locatedProjects[event.instanceId];
+          if (record) onSelectProject(record.project.id);
+        }}
+        onPointerMove={(event: ThreeEvent<PointerEvent>) => {
+          event.stopPropagation();
+          setHovered(event.instanceId ?? null);
+        }}
+        onPointerOut={() => setHovered(null)}
+      >
+        <sphereGeometry args={[0.18, 8, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
+      </instancedMesh>
+      {hoveredProject ? (
+        <Html position={hoveredProject.position} zIndexRange={[9, 0]} style={{ pointerEvents: "none" }}>
+          <span className="project-hover-label"><b>{companyCode(hoveredProject.project)}</b>{hoveredProject.project.company}</span>
+        </Html>
+      ) : null}
+    </>
   );
 }
+
+const ProjectLabels = memo(function ProjectLabels({
+  locatedProjects,
+  visible,
+  zoomLevel,
+  selectedProjectId,
+  onSelectProject,
+}: {
+  locatedProjects: LocatedProject[];
+  visible: boolean;
+  zoomLevel: number;
+  selectedProjectId: number | null;
+  onSelectProject: (projectId: number) => void;
+}) {
+  const buttonRefs = useRef(new Map<number, HTMLButtonElement>());
+  const projectedPointRef = useRef(new Vector3());
+  const wasVisibleRef = useRef(false);
+  const occupiedCellsRef = useRef(new Set<string>());
+  const labelLayouts = useMemo<ProjectLabelLayout[]>(() => {
+    const groups = new Map<string, LocatedProject[]>();
+    locatedProjects.forEach((item) => {
+      const key = `${item.position.x.toFixed(4)}:${item.position.y.toFixed(4)}`;
+      const group = groups.get(key);
+      if (group) group.push(item);
+      else groups.set(key, [item]);
+    });
+
+    const layouts: ProjectLabelLayout[] = [];
+    groups.forEach((group) => {
+      const rows = Math.ceil(group.length / 2);
+      group.forEach((item, index) => {
+        const row = Math.floor(index / 2);
+        layouts.push({
+          ...item,
+          side: index % 2 === 0 ? "right" : "left",
+          offsetY: (row - (rows - 1) / 2) * 34,
+        });
+      });
+    });
+    return layouts;
+  }, [locatedProjects]);
+  const orderedLabelLayouts = useMemo(() => {
+    if (selectedProjectId === null) return labelLayouts;
+    const selected = labelLayouts.find((layout) => layout.project.id === selectedProjectId);
+    if (!selected) return labelLayouts;
+    return [selected, ...labelLayouts.filter((layout) => layout.project.id !== selectedProjectId)];
+  }, [labelLayouts, selectedProjectId]);
+
+  useFrame(({ camera, size }) => {
+    if (!visible) {
+      if (wasVisibleRef.current) buttonRefs.current.forEach((button) => { button.hidden = true; });
+      wasVisibleRef.current = false;
+      return;
+    }
+
+    wasVisibleRef.current = true;
+    const declutter = zoomLevel < 10;
+    const occupiedCells = occupiedCellsRef.current;
+    occupiedCells.clear();
+
+    orderedLabelLayouts.forEach((layout) => {
+      const button = buttonRefs.current.get(layout.project.id);
+      if (!button) return;
+      const projected = projectedPointRef.current.copy(layout.position).project(camera);
+      const onScreen = projected.z > -1 && projected.z < 1 && projected.x > -0.99 && projected.x < 0.99 && projected.y > -0.99 && projected.y < 0.99;
+      if (!onScreen) {
+        button.hidden = true;
+        return;
+      }
+
+      button.hidden = false;
+      const x = (projected.x * 0.5 + 0.5) * size.width;
+      const rawY = (-projected.y * 0.5 + 0.5) * size.height + layout.offsetY;
+      const y = Math.max(22, Math.min(size.height - 22, rawY));
+      const maxWidth = size.width < 600 ? 190 : 260;
+      const renderSide = x > size.width - maxWidth - 18 ? "left" : x < maxWidth + 18 ? "right" : layout.side;
+      if (declutter) {
+        const width = Math.min(maxWidth, 44 + layout.project.company.length * 10);
+        const height = layout.project.company.length > 18 ? 40 : 28;
+        const left = renderSide === "left" ? x - 11 - width : x + 11;
+        const right = renderSide === "left" ? x - 11 : x + 11 + width;
+        const top = y - height / 2;
+        const bottom = y + height / 2;
+        const cells: string[] = [];
+        for (let cellX = Math.floor(left / 72); cellX <= Math.floor(right / 72); cellX += 1) {
+          for (let cellY = Math.floor(top / 26); cellY <= Math.floor(bottom / 26); cellY += 1) {
+            cells.push(`${cellX}:${cellY}`);
+          }
+        }
+        const overlaps = cells.some((cell) => occupiedCells.has(cell));
+        if (overlaps && layout.project.id !== selectedProjectId) {
+          button.hidden = true;
+          return;
+        }
+        cells.forEach((cell) => occupiedCells.add(cell));
+      }
+
+      button.style.transform = renderSide === "left"
+        ? `translate3d(${x - 11}px, ${y}px, 0) translate(-100%, -50%)`
+        : `translate3d(${x + 11}px, ${y}px, 0) translate(0, -50%)`;
+    });
+  });
+
+  return (
+    <Html fullscreen zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
+      <div className="project-label-layer" aria-hidden={!visible}>
+        {labelLayouts.map(({ project }) => (
+          <button
+            key={project.id}
+            ref={(node) => {
+              if (node) buttonRefs.current.set(project.id, node);
+              else buttonRefs.current.delete(project.id);
+            }}
+            className={`project-company-label ${selectedProjectId === project.id ? "is-active" : ""}`}
+            type="button"
+            hidden={!visible}
+            aria-label={`选择公司 ${companyCode(project)} ${project.company}`}
+            title={project.company}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectProject(project.id);
+            }}
+          >
+            <span>{companyCode(project)}</span>
+            <b>{project.company}</b>
+          </button>
+        ))}
+      </div>
+    </Html>
+  );
+});
 
 function SelectedBeacon({
   project,
@@ -463,6 +624,8 @@ function CameraRig({
     };
   };
 
+  const selectedProjectId = selectedProject?.id ?? null;
+
   useEffect(() => {
     if (selectedProject) {
       const position = projectWorldPoint(selectedProject, coordinateMode, mapData, 0);
@@ -473,7 +636,7 @@ function CameraRig({
       const province = mapData.provinces.find((item) => item.name === selectedProvince);
       if (province) animateTo(mapPointToWorld(province.label.x, province.label.y, mapData), aspect < 0.75 ? 42 : 25.5);
     }
-  }, [aspect, coordinateMode, mapData, selectedProject, selectedProvince]);
+  }, [coordinateMode, mapData, selectedProjectId, selectedProvince]);
 
   useEffect(() => {
     if (!selectedProject && !selectedProvince) animateTo(new Vector3(0, 0, 0), resetDistance);
@@ -533,6 +696,9 @@ function CameraRig({
       zoomSpeed={1.4}
       zoomToCursor
       screenSpacePanning
+      onStart={() => {
+        animationRef.current = null;
+      }}
     />
   );
 }
@@ -546,6 +712,8 @@ function Scene({
   selectedProvince,
   command,
   reducedMotion,
+  showCompanyLabels,
+  zoomLevel,
   onSelectProvince,
   onSelectProject,
   onClearSelection,
@@ -554,10 +722,16 @@ function Scene({
   selectedProvince: string | null;
   command: ViewCommand;
   reducedMotion: boolean;
+  showCompanyLabels: boolean;
+  zoomLevel: number;
   onSelectProvince: (name: string) => void;
   onZoomChange: (zoom: number) => void;
 }) {
   const night = theme === "night";
+  const locatedProjects = useMemo(
+    () => projects.map((project) => ({ project, position: projectWorldPoint(project, coordinateMode, mapData) })).filter((item): item is LocatedProject => Boolean(item.position)),
+    [coordinateMode, mapData, projects],
+  );
   return (
     <>
       <color attach="background" args={[night ? "#03111f" : "#f8faff"]} />
@@ -568,7 +742,8 @@ function Scene({
       <NetworkField theme={theme} reducedMotion={reducedMotion} />
       {!reducedMotion && <Sparkles count={90} scale={[20, 15, 1.2]} size={1.4} speed={0.12} color={night ? "#8dffc2" : "#245dff"} opacity={night ? 0.32 : 0.15} position={[0, 0, -0.35]} />}
       <ProvinceLayer mapData={mapData} selectedProvince={selectedProvince} theme={theme} reducedMotion={reducedMotion} onSelectProvince={onSelectProvince} />
-      <ProjectInstances projects={projects} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
+      <ProjectInstances locatedProjects={locatedProjects} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
+      <ProjectLabels locatedProjects={locatedProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} selectedProjectId={selectedProject?.id ?? null} onSelectProject={onSelectProject} />
       <SelectedBeacon project={selectedProject} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onClearSelection={onClearSelection} />
       <ProvinceLabels mapData={mapData} selectedProvince={selectedProvince} />
       <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} />
@@ -606,6 +781,7 @@ export default function WebGLMap(props: WebGLMapProps) {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const canRenderWebGL = useMemo(webGLAvailable, []);
+  const showCompanyLabels = zoomLevel >= COMPANY_LABEL_ZOOM;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -622,6 +798,16 @@ export default function WebGLMap(props: WebGLMapProps) {
     setCommand((current) => ({ id: current.id + 1, type }));
   };
 
+  const handleSelectProject = useCallback((projectId: number) => {
+    setSelectedProvince(null);
+    props.onSelectProject(projectId);
+  }, [props.onSelectProject]);
+
+  const handleSelectProvince = useCallback((name: string) => {
+    props.onClearSelection();
+    setSelectedProvince((current) => (current === name ? null : name));
+  }, [props.onClearSelection]);
+
   return (
     <div className="webgl-map">
       {canRenderWebGL ? (
@@ -629,7 +815,6 @@ export default function WebGLMap(props: WebGLMapProps) {
           dpr={[1, 1.65]}
           camera={{ position: [0, -0.4, 38], fov: 30, near: 0.1, far: 200 }}
           gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
-          onPointerMissed={() => props.onClearSelection()}
           fallback={<StaticMapFallback mapData={props.mapData} projects={props.projects} coordinateMode={props.coordinateMode} theme={props.theme} />}
         >
           <Scene
@@ -637,8 +822,11 @@ export default function WebGLMap(props: WebGLMapProps) {
             selectedProvince={selectedProvince}
             command={command}
             reducedMotion={reducedMotion}
+            showCompanyLabels={showCompanyLabels}
+            zoomLevel={zoomLevel}
             onZoomChange={setZoomLevel}
-            onSelectProvince={(name) => setSelectedProvince((current) => (current === name ? null : name))}
+            onSelectProvince={handleSelectProvince}
+            onSelectProject={handleSelectProject}
           />
         </Canvas>
       ) : (
@@ -654,8 +842,8 @@ export default function WebGLMap(props: WebGLMapProps) {
         {showHelp && (
           <div className="map-help-body">
             <span><MousePointer2 size={13} />拖拽移动 · 滚轮缩放 · 最高 20×</span>
-            <span><i className="legend-dot" />光点为项目，数字为省级数量</span>
-            <span><i className="legend-label" />点击省域或项目进入聚焦视图</span>
+            <span><i className="legend-dot" />光点为项目，悬停可查看公司</span>
+            <span><i className="legend-label" />4× 起显示公司名，10× 后显示视野内全部公司</span>
           </div>
         )}
       </div>
@@ -671,7 +859,7 @@ export default function WebGLMap(props: WebGLMapProps) {
         <button type="button" onClick={() => issueCommand("reset")} aria-label="显示全国"><RotateCcw size={15} /> 全国</button>
       </div>
 
-      <div className="map-status" aria-live="polite"><span /> {selectedProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : "全国")} · {zoomLevel.toFixed(1)}×</div>
+      <div className="map-status" aria-live="polite"><span /> {selectedProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : "全国")} · {zoomLevel.toFixed(1)}×{showCompanyLabels ? " · 公司名称" : ""}</div>
     </div>
   );
 }

@@ -420,6 +420,83 @@ p {
   box-shadow: 0 0 22px var(--accent-soft);
 }
 
+.project-hover-label,
+.project-company-label {
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 7px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28), 0 0 16px color-mix(in srgb, var(--accent) 12%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.project-hover-label {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: 260px;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 10px;
+  line-height: 1.25;
+  transform: translate(10px, -50%);
+  pointer-events: none;
+}
+
+.project-hover-label b,
+.project-company-label span {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-label-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.project-company-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: flex-start;
+  width: max-content;
+  max-width: min(260px, 30vw);
+  gap: 6px;
+  padding: 6px 8px;
+  text-align: left;
+  line-height: 1.25;
+  pointer-events: auto;
+  will-change: transform;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.project-company-label[hidden] {
+  display: none;
+}
+
+.project-company-label b {
+  font-size: 10px;
+  font-weight: 650;
+  white-space: normal;
+}
+
+.project-company-label:hover,
+.project-company-label:focus-visible,
+.project-company-label.is-active {
+  z-index: 4;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--accent-soft));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34), 0 0 22px var(--accent-soft);
+  outline: none;
+}
+
 .map-callout {
   position: relative;
   display: grid;
@@ -1123,6 +1200,20 @@ input:focus-visible {
     min-width: 14px;
     height: 14px;
     font-size: 7px;
+  }
+
+  .project-company-label {
+    max-width: min(190px, 52vw);
+    padding: 5px 7px;
+  }
+
+  .project-company-label b {
+    font-size: 9px;
+  }
+
+  .project-hover-label {
+    max-width: 190px;
+    font-size: 9px;
   }
 
   .map-callout {
