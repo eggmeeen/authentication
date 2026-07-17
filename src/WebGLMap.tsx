@@ -401,14 +401,18 @@ const ProjectLabels = memo(function ProjectLabels({
     const mapRoot = firstButton?.closest(".webgl-map");
     const canvasRect = mapRoot?.querySelector("canvas")?.getBoundingClientRect();
     if (canvasRect && mapRoot) {
-      mapRoot.querySelectorAll(".map-callout, .map-help, .map-controls, .map-status, .map-precision-badge, .map-scale-bar").forEach((element) => {
+      const blockedElements = [...mapRoot.querySelectorAll(".map-callout, .map-help, .map-controls, .map-status, .map-precision-badge, .map-scale-bar")];
+      const sidePanel = mapRoot.closest(".workspace")?.querySelector(".side-panel");
+      if (sidePanel) blockedElements.push(sidePanel);
+      blockedElements.forEach((element) => {
         const blocked = element.getBoundingClientRect();
         if (!blocked.width || !blocked.height) return;
+        const padding = size.width < 360 && element.classList.contains("map-controls") ? 0 : 6;
         placedRects.push({
-          bottom: blocked.bottom - canvasRect.top + 6,
-          left: blocked.left - canvasRect.left - 6,
-          right: blocked.right - canvasRect.left + 6,
-          top: blocked.top - canvasRect.top - 6,
+          bottom: blocked.bottom - canvasRect.top + padding,
+          left: blocked.left - canvasRect.left - padding,
+          right: blocked.right - canvasRect.left + padding,
+          top: blocked.top - canvasRect.top - padding,
         });
       });
     }
@@ -445,7 +449,7 @@ const ProjectLabels = memo(function ProjectLabels({
       const measured = button.getBoundingClientRect();
       const width = Math.min(maxWidth, measured.width || 44 + layout.project.company.length * 10);
       const height = measured.height || (layout.project.company.length > 18 ? 40 : 28);
-      let placement: { side: string; y: number } | null = null;
+      let placement: { left: number; y: number } | null = null;
 
       for (const side of sideChoices) {
         for (const offset of verticalOffsets) {
@@ -459,7 +463,7 @@ const ProjectLabels = memo(function ProjectLabels({
           };
           const withinCanvas = rect.left >= 4 && rect.right <= size.width - 4 && rect.top >= 4 && rect.bottom <= size.height - 4;
           if (withinCanvas && !placedRects.some((placed) => overlaps(rect, placed))) {
-            placement = { side, y };
+            placement = { left, y };
             placedRects.push(rect);
             break;
           }
@@ -467,13 +471,34 @@ const ProjectLabels = memo(function ProjectLabels({
         if (placement) break;
       }
 
+      if (!placement && !declutter) {
+        const rightLane = Math.floor(size.width - width - 4);
+        const edgeLanesFit = size.width < 600 && width * 2 + 16 <= size.width;
+        const fallbackLefts = [...new Set(edgeLanesFit
+          ? [4, rightLane]
+          : [4, Math.floor((size.width - width) / 2), rightLane]
+        )].filter((left) => left >= 4 && left + width <= size.width - 4);
+        const fallbackStep = size.width < 600 ? 4 : 8;
+        let fallback: { left: number; y: number; rect: LabelRect; score: number } | null = null;
+        for (const left of fallbackLefts) {
+          for (let y = 4 + height / 2; y <= size.height - 4 - height / 2; y += fallbackStep) {
+            const rect = { bottom: y + height / 2, left, right: left + width, top: y - height / 2 };
+            if (placedRects.some((placed) => overlaps(rect, placed))) continue;
+            const score = Math.abs(y - anchorY) + Math.abs(left + width / 2 - x) * 0.28;
+            if (!fallback || score < fallback.score) fallback = { left, y, rect, score };
+          }
+        }
+        if (fallback) {
+          placement = { left: fallback.left, y: fallback.y };
+          placedRects.push(fallback.rect);
+        }
+      }
+
       if (!placement) {
         button.hidden = true;
         return;
       }
-      button.style.transform = placement.side === "left"
-        ? `translate3d(${x - 11}px, ${placement.y}px, 0) translate(-100%, -50%)`
-        : `translate3d(${x + 11}px, ${placement.y}px, 0) translate(0, -50%)`;
+      button.style.transform = `translate3d(${placement.left}px, ${placement.y}px, 0) translate(0, -50%)`;
     });
   });
 
@@ -508,6 +533,7 @@ const ProjectLabelOverlay = memo(function ProjectLabelOverlay({
           aria-label={`选择公司 ${companyCode(project)} ${project.company}`}
           title={project.company}
           onPointerDown={(event) => event.stopPropagation()}
+          onPointerUp={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             onSelectProject(project.id);
@@ -541,6 +567,7 @@ function SelectedBeacon({
   const ringMaterialRef = useRef<MeshBasicMaterial>(null);
   const calloutRef = useRef<HTMLElement>(null);
   const calloutAnchorRef = useRef(new Vector3());
+  const lastCalloutTransformRef = useRef("");
   const position = useMemo(
     () => (project ? projectWorldPoint(project, coordinateMode, mapData, 0.58) : null),
     [coordinateMode, mapData, project],
@@ -563,9 +590,58 @@ function SelectedBeacon({
       const fitsLeft = x - width >= 12;
       const fitsBelow = y + height <= size.height - 12;
       const fitsAbove = y - height >= 12;
-      const translateX = fitsRight ? "0px" : fitsLeft ? "calc(-100% - 18px)" : "calc(-50%)";
-      const translateY = fitsBelow ? "0px" : fitsAbove ? "calc(-100% - 18px)" : "calc(-50%)";
-      calloutRef.current.style.transform = `translate3d(${translateX}, ${translateY}, 0)`;
+      const minLeft = 12;
+      const minTop = 12;
+      const maxLeft = Math.max(minLeft, size.width - width - 12);
+      const maxTop = Math.max(minTop, size.height - height - 12);
+      const clampLeft = (value: number) => Math.max(minLeft, Math.min(maxLeft, value));
+      const clampTop = (value: number) => Math.max(minTop, Math.min(maxTop, value));
+      const preferredLeft = clampLeft(fitsRight ? x : fitsLeft ? x - width - 18 : x - width / 2);
+      const preferredTop = clampTop(fitsBelow ? y : fitsAbove ? y - height - 18 : y - height / 2);
+      type CalloutRect = { bottom: number; left: number; right: number; top: number };
+      const blockedRects: CalloutRect[] = [];
+      const mapRoot = calloutRef.current.closest(".webgl-map");
+      const canvasRect = mapRoot?.querySelector("canvas")?.getBoundingClientRect();
+      if (mapRoot && canvasRect) {
+        const blockedElements = [...mapRoot.querySelectorAll(".map-help, .map-controls, .map-status, .map-precision-badge, .map-scale-bar")];
+        const sidePanel = mapRoot.closest(".workspace")?.querySelector(".side-panel");
+        if (sidePanel) blockedElements.push(sidePanel);
+        blockedElements.forEach((element) => {
+          const blocked = element.getBoundingClientRect();
+          if (!blocked.width || !blocked.height) return;
+          blockedRects.push({
+            bottom: blocked.bottom - canvasRect.top + 6,
+            left: blocked.left - canvasRect.left - 6,
+            right: blocked.right - canvasRect.left + 6,
+            top: blocked.top - canvasRect.top - 6,
+          });
+        });
+      }
+      const leftCandidates = [preferredLeft, clampLeft(x), clampLeft(x - width - 18), clampLeft(x - width / 2), minLeft, maxLeft];
+      const topCandidates = [preferredTop, clampTop(y), clampTop(y - height - 18), clampTop(y - height / 2), minTop, maxTop];
+      blockedRects.forEach((blocked) => {
+        leftCandidates.push(clampLeft(blocked.left - width), clampLeft(blocked.right));
+        topCandidates.push(clampTop(blocked.top - height), clampTop(blocked.bottom));
+      });
+      const overlaps = (a: CalloutRect, b: CalloutRect) => (
+        a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+      );
+      let placement: { left: number; score: number; top: number } | null = null;
+      for (const left of [...new Set(leftCandidates)]) {
+        for (const top of [...new Set(topCandidates)]) {
+          const rect = { bottom: top + height, left, right: left + width, top };
+          if (blockedRects.some((blocked) => overlaps(rect, blocked))) continue;
+          const score = Math.abs(left - preferredLeft) * 0.35 + Math.abs(top - preferredTop);
+          if (!placement || score < placement.score) placement = { left, score, top };
+        }
+      }
+      const left = placement?.left ?? preferredLeft;
+      const top = placement?.top ?? preferredTop;
+      const transform = `translate3d(${(left - x).toFixed(1)}px, ${(top - y).toFixed(1)}px, 0)`;
+      if (transform !== lastCalloutTransformRef.current) {
+        lastCalloutTransformRef.current = transform;
+        calloutRef.current.style.transform = transform;
+      }
     }
 
     if (ringRef.current && ringMaterialRef.current && !reducedMotion) {
@@ -590,7 +666,13 @@ function SelectedBeacon({
       </mesh>
       <pointLight color={accent} intensity={1.8} distance={3.8} />
       <Html position={[0.18, 0.18, 0]} center={false} zIndexRange={[100, 0]}>
-        <article ref={calloutRef} className="map-callout">
+        <article
+          ref={calloutRef}
+          className="map-callout"
+          onPointerDown={(event) => event.stopPropagation()}
+          onPointerUp={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
           <button type="button" aria-label="关闭项目详情" onClick={onClearSelection}><X size={13} /></button>
           <span>{companyCode(project)} · {project.displayCityLabel || project.displayCity}</span>
           <strong>{project.company}</strong>
@@ -692,6 +774,7 @@ function CameraRig({
   command,
   reducedMotion,
   onZoomChange,
+  onNationalViewChange,
 }: {
   selectedProject: ProjectRecord | null;
   selectedProvince: string | null;
@@ -700,6 +783,7 @@ function CameraRig({
   command: ViewCommand;
   reducedMotion: boolean;
   onZoomChange: (zoom: number) => void;
+  onNationalViewChange: (isNational: boolean) => void;
 }) {
   const controlsRef = useRef<React.ElementRef<typeof MapControls>>(null);
   const { camera, size } = useThree();
@@ -707,6 +791,7 @@ function CameraRig({
   const resetDistance = overviewDistanceForAspect(aspect);
   const minDistance = resetDistance / MAX_ZOOM;
   const lastZoomRef = useRef(1);
+  const lastNationalViewRef = useRef(true);
   const animationRef = useRef<{
     progress: number;
     fromPosition: Vector3;
@@ -718,7 +803,9 @@ function CameraRig({
   const animateTo = (target: Vector3, distance: number) => {
     const controls = controlsRef.current;
     const currentTarget = controls?.target.clone() ?? new Vector3();
-    const toPosition = new Vector3(target.x, target.y - 0.3, distance);
+    const yOffset = Math.min(0.3, distance * 0.16);
+    const zOffset = Math.sqrt(Math.max(0.01, distance * distance - yOffset * yOffset));
+    const toPosition = new Vector3(target.x, target.y - yOffset, target.z + zOffset);
     animationRef.current = {
       progress: 0,
       fromPosition: camera.position.clone(),
@@ -789,6 +876,13 @@ function CameraRig({
       lastZoomRef.current = roundedZoom;
       onZoomChange(roundedZoom);
     }
+    if (!animationRef.current) {
+      const isNationalView = controls.target.lengthSq() < 0.0025 && Math.abs(zoom - 1) < 0.05;
+      if (isNationalView !== lastNationalViewRef.current) {
+        lastNationalViewRef.current = isNationalView;
+        onNationalViewChange(isNationalView);
+      }
+    }
   });
 
   return (
@@ -825,6 +919,7 @@ function Scene({
   onSelectProject,
   onClearSelection,
   onZoomChange,
+  onNationalViewChange,
 }: WebGLMapProps & {
   selectedProvince: string | null;
   command: ViewCommand;
@@ -834,6 +929,7 @@ function Scene({
   labelButtonRefs: { current: Map<number, HTMLButtonElement> };
   onSelectProvince: (name: string) => void;
   onZoomChange: (zoom: number) => void;
+  onNationalViewChange: (isNational: boolean) => void;
 }) {
   const night = theme === "night";
   const locatedProjects = useMemo(
@@ -854,7 +950,7 @@ function Scene({
       <ProjectLabels locatedProjects={locatedProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} buttonRefs={labelButtonRefs} selectedProjectId={selectedProject?.id ?? null} />
       <SelectedBeacon project={selectedProject} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onClearSelection={onClearSelection} />
       <ProvinceLabels mapData={mapData} selectedProvince={selectedProvince} />
-      <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} />
+      <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} onNationalViewChange={onNationalViewChange} />
     </>
   );
 }
@@ -887,10 +983,13 @@ export default function WebGLMap(props: WebGLMapProps) {
   const [showHelp, setShowHelp] = useState(true);
   const [command, setCommand] = useState<ViewCommand>({ id: 0, type: "reset" });
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [isNationalView, setIsNationalView] = useState(true);
   const labelButtonRefs = useRef(new Map<number, HTMLButtonElement>());
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const canRenderWebGL = useMemo(webGLAvailable, []);
   const showCompanyLabels = zoomLevel >= COMPANY_LABEL_ZOOM;
+  const selectedProjectId = props.selectedProject?.id ?? null;
+  const activeProvince = selectedProjectId === null ? selectedProvince : null;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -898,6 +997,10 @@ export default function WebGLMap(props: WebGLMapProps) {
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
   }, []);
+
+  useEffect(() => {
+    if (selectedProjectId !== null) setSelectedProvince(null);
+  }, [selectedProjectId]);
 
   const issueCommand = (type: ViewCommand["type"]) => {
     if (type === "reset") {
@@ -928,13 +1031,14 @@ export default function WebGLMap(props: WebGLMapProps) {
         >
           <Scene
             {...props}
-            selectedProvince={selectedProvince}
+            selectedProvince={activeProvince}
             command={command}
             reducedMotion={reducedMotion}
             showCompanyLabels={showCompanyLabels}
             zoomLevel={zoomLevel}
             labelButtonRefs={labelButtonRefs}
             onZoomChange={setZoomLevel}
+            onNationalViewChange={setIsNationalView}
             onSelectProvince={handleSelectProvince}
             onSelectProject={handleSelectProject}
           />
@@ -946,14 +1050,19 @@ export default function WebGLMap(props: WebGLMapProps) {
       <ProjectLabelOverlay
         projects={props.projects}
         visible={showCompanyLabels}
-        selectedProjectId={props.selectedProject?.id ?? null}
+        selectedProjectId={selectedProjectId}
         buttonRefs={labelButtonRefs}
         onSelectProject={handleSelectProject}
       />
 
       <div className="map-precision-badge"><LocateFixed size={14} /> WebGL 高精度矢量图</div>
 
-      <div className="map-help">
+      <div
+        className="map-help"
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
         <button type="button" className="map-help-toggle" onClick={() => setShowHelp((current) => !current)} aria-expanded={showHelp}>
           <CircleHelp size={15} /> 地图使用说明
         </button>
@@ -971,13 +1080,19 @@ export default function WebGLMap(props: WebGLMapProps) {
         <i />
       </div>
 
-      <div className="map-controls" aria-label="地图缩放">
+      <div
+        className="map-controls"
+        aria-label="地图缩放"
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
         <button type="button" onClick={() => issueCommand("in")} aria-label="放大地图" title="放大地图（最高 20×）"><Plus size={18} /></button>
         <button type="button" onClick={() => issueCommand("out")} aria-label="缩小地图"><Minus size={18} /></button>
         <button type="button" onClick={() => issueCommand("reset")} aria-label="显示全国"><RotateCcw size={15} /> 全国</button>
       </div>
 
-      <div className="map-status" aria-live="polite"><span /> {selectedProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : "全国")} · {zoomLevel.toFixed(1)}×{showCompanyLabels ? " · 公司名称" : ""}</div>
+      <div className="map-status" aria-live="polite"><span /> {activeProvince || (props.selectedProject ? props.selectedProject.displayCityLabel : isNationalView ? "全国" : "自由浏览")} · {zoomLevel.toFixed(1)}×{showCompanyLabels ? " · 公司名称" : ""}</div>
     </div>
   );
 }

@@ -60,12 +60,22 @@ function EmptyState({ query }: { query: string }) {
   );
 }
 
-function ProjectRow({ project, active, onSelect }: { project: ProjectRecord; active: boolean; onSelect: () => void }) {
+function ProjectRow({
+  project,
+  active,
+  visibilityKey,
+  onSelect,
+}: {
+  project: ProjectRecord;
+  active: boolean;
+  visibilityKey: string;
+  onSelect: () => void;
+}) {
   const rowRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (active) rowRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [active]);
+    if (active) rowRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [active, visibilityKey]);
 
   return (
     <button
@@ -148,6 +158,7 @@ export default function App() {
 
   const visibleProjects = deferredQuery.trim() ? filteredProjects : dataset?.projects ?? [];
   const isSearchPending = query !== deferredQuery;
+  const hasQuery = query.trim().length > 0;
   const selectedProject = useMemo(() => {
     if (!dataset || !selectedProjectId) return null;
     return dataset.projects.find((project) => project.id === selectedProjectId) ?? null;
@@ -162,6 +173,16 @@ export default function App() {
     setQuery("");
     setSelectedProjectId(null);
   }, []);
+
+  const updateQuery = useCallback((value: string) => {
+    setQuery(value);
+    if (!dataset || !value.trim()) return;
+    setSelectedProjectId((current) => {
+      if (!current) return current;
+      const selected = dataset.projects.find((project) => project.id === current);
+      return selected && projectMatches(selected, value) ? current : null;
+    });
+  }, [dataset]);
 
   if (loadError) {
     return (
@@ -185,6 +206,7 @@ export default function App() {
   const districtCount = dataset.metadata.matchMethods.district ?? 0;
   const prefectureCount = dataset.metadata.matchMethods.prefecture ?? 0;
   const nextTheme = theme === "night" ? "day" : "night";
+  const selectedRowVisibilityKey = `${deferredQuery.trim() || "all"}:${visibleProjects.length}:${isMobileLayout ? mobileDrawerExpanded : "desktop"}`;
 
   return (
     <main className={`app-shell theme-${theme}`}>
@@ -201,9 +223,9 @@ export default function App() {
           <Search size={17} />
           <input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => updateQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") {
+              if (event.key === "Enter" && query.trim()) {
                 const firstMatch = dataset.projects.find((project) => projectMatches(project, query));
                 if (firstMatch) onSelectProject(firstMatch.id);
               }
@@ -212,8 +234,8 @@ export default function App() {
             placeholder="搜索编号、公司、城市、地址"
             aria-label="搜索编号、公司、城市、地址"
           />
-          {query && <span className="search-count">{isSearchPending ? <Loader2 className="spin" size={13} /> : `${filteredProjects.length} 条`}</span>}
-          {query && <button className="clear-button" type="button" onClick={clearSearch} aria-label="清除搜索"><X size={14} /></button>}
+          {hasQuery && <span className="search-count">{isSearchPending ? <Loader2 className="spin" size={13} /> : `${filteredProjects.length} 条`}</span>}
+          {hasQuery && <button className="clear-button" type="button" onClick={clearSearch} aria-label="清除搜索"><X size={14} /></button>}
         </div>
 
         <div className="segmented" aria-label="坐标模式">
@@ -281,14 +303,30 @@ export default function App() {
             </div>
           </div>
 
-          <div className="selection-summary">
-            <span>{query.trim() ? "搜索结果" : "全部项目"}</span>
-            <strong>{visibleProjects.length}</strong>
+          <div className={`selection-summary ${selectedProject ? "has-selection" : ""}`}>
+            {selectedProject ? (
+              <>
+                <span className="selection-project-meta">{companyCode(selectedProject)} · {selectedProject.displayCityLabel}</span>
+                <strong className="selection-project-name">{selectedProject.company}</strong>
+                <button className="selection-clear" type="button" onClick={() => setSelectedProjectId(null)} aria-label="清除已选公司"><X size={13} /></button>
+              </>
+            ) : (
+              <>
+                <span>{hasQuery ? "搜索结果" : "全部项目"}</span>
+                <strong>{visibleProjects.length}</strong>
+              </>
+            )}
           </div>
 
           <div className="project-list">
             {visibleProjects.length ? visibleProjects.map((project) => (
-              <ProjectRow key={project.id} project={project} active={project.id === selectedProject?.id} onSelect={() => onSelectProject(project.id)} />
+              <ProjectRow
+                key={project.id}
+                project={project}
+                active={project.id === selectedProject?.id}
+                visibilityKey={selectedRowVisibilityKey}
+                onSelect={() => onSelectProject(project.id)}
+              />
             )) : <EmptyState query={query} />}
           </div>
 
