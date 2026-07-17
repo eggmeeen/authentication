@@ -22,6 +22,7 @@ const MAP_SCALE = 0.0182;
 const MAX_ZOOM = 20;
 const MAX_CAMERA_DISTANCE = 92;
 const COMPANY_LABEL_ZOOM = 4;
+const CLUSTER_MARKER_ZOOM = 4;
 const CLICK_DRAG_TOLERANCE = 5;
 
 function overviewDistanceForAspect(aspect: number) {
@@ -44,8 +45,17 @@ interface ViewCommand {
 }
 
 interface LocatedProject {
+  coordinate: Coord;
+  coordinateKey: string;
   project: ProjectRecord;
   position: Vector3;
+}
+
+interface ProjectCluster {
+  coordinate: Coord;
+  key: string;
+  position: Vector3;
+  projects: LocatedProject[];
 }
 
 interface ProjectLabelLayout extends LocatedProject {
@@ -93,6 +103,37 @@ function projectWorldPoint(project: ProjectRecord, mode: CoordinateMode, mapData
   if (!coord) return null;
   const point = projectMapPoint(coord, mapData);
   return mapPointToWorld(point.x, point.y, mapData, z);
+}
+
+function locateProject(project: ProjectRecord, mode: CoordinateMode, mapData: ChinaMapDataset): LocatedProject | null {
+  const coordinate = coordFor(project, mode);
+  if (!coordinate) return null;
+  const position = projectWorldPoint(project, mode, mapData);
+  if (!position) return null;
+  return {
+    coordinate,
+    coordinateKey: `${coordinate.lng}:${coordinate.lat}`,
+    project,
+    position,
+  };
+}
+
+function clusterProjects(locatedProjects: LocatedProject[]): ProjectCluster[] {
+  const clusterMap = new Map<string, ProjectCluster>();
+  locatedProjects.forEach((locatedProject) => {
+    const existing = clusterMap.get(locatedProject.coordinateKey);
+    if (existing) {
+      existing.projects.push(locatedProject);
+      return;
+    }
+    clusterMap.set(locatedProject.coordinateKey, {
+      coordinate: locatedProject.coordinate,
+      key: locatedProject.coordinateKey,
+      position: locatedProject.position,
+      projects: [locatedProject],
+    });
+  });
+  return [...clusterMap.values()];
 }
 
 function companyCode(project: ProjectRecord) {
@@ -304,6 +345,106 @@ function ProjectInstances({
     </>
   );
 }
+
+const ProjectClusterGhosts = memo(function ProjectClusterGhosts({
+  clusters,
+  theme,
+  reducedMotion,
+}: {
+  clusters: ProjectCluster[];
+  theme: ThemeMode;
+  reducedMotion: boolean;
+}) {
+  const meshRef = useRef<InstancedMesh>(null);
+  const materialRef = useRef<MeshBasicMaterial>(null);
+  const lastMarkerScaleRef = useRef(1);
+  const dummy = useMemo(() => new Object3D(), []);
+
+  useLayoutEffect(() => {
+    if (!meshRef.current) return;
+    clusters.forEach(({ position }, index) => {
+      dummy.position.copy(position);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      meshRef.current?.setMatrixAt(index, dummy.matrix);
+    });
+    meshRef.current.count = clusters.length;
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    meshRef.current.computeBoundingSphere();
+  }, [clusters, dummy]);
+
+  useFrame(({ camera, clock, size }) => {
+    const overviewDistance = overviewDistanceForAspect(size.width / Math.max(1, size.height));
+    const markerScale = Math.max(0.18, Math.min(1, Math.abs(camera.position.z) / overviewDistance));
+    if (meshRef.current && Math.abs(markerScale - lastMarkerScaleRef.current) > 0.012) {
+      clusters.forEach(({ position }, index) => {
+        dummy.position.copy(position);
+        dummy.scale.setScalar(markerScale);
+        dummy.updateMatrix();
+        meshRef.current?.setMatrixAt(index, dummy.matrix);
+      });
+      meshRef.current.instanceMatrix.needsUpdate = true;
+      lastMarkerScaleRef.current = markerScale;
+    }
+    if (materialRef.current && !reducedMotion) {
+      materialRef.current.opacity = 0.42 + Math.sin(clock.elapsedTime * 1.1) * 0.08;
+    }
+  });
+
+  if (!clusters.length) return null;
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, Math.max(1, clusters.length)]}>
+      <sphereGeometry args={[0.072, 9, 9]} />
+      <meshBasicMaterial ref={materialRef} color={theme === "night" ? "#83ff9d" : "#245dff"} transparent opacity={0.42} toneMapped={false} />
+    </instancedMesh>
+  );
+});
+
+const ProjectClusterMarkers = memo(function ProjectClusterMarkers({
+  clusters,
+  visible,
+  expandedClusterKey,
+  onToggleCluster,
+}: {
+  clusters: ProjectCluster[];
+  visible: boolean;
+  expandedClusterKey: string | null;
+  onToggleCluster: (key: string) => void;
+}) {
+  if (!visible) return null;
+  return (
+    <>
+      {clusters.map((cluster) => {
+        const isExpanded = cluster.key === expandedClusterKey;
+        const count = cluster.projects.length;
+        return (
+          <Html key={cluster.key} position={cluster.position} center zIndexRange={[150, 0]} style={{ pointerEvents: "auto" }}>
+            <div
+              className="project-cluster-anchor"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+            >
+              <button
+                className={`project-cluster-marker ${isExpanded ? "is-expanded" : ""}`}
+                type="button"
+                aria-expanded={isExpanded}
+                aria-label={`展开同坐标的 ${count} 家公司`}
+                title={`${count} 家公司使用同一地图坐标`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleCluster(cluster.key);
+                }}
+              >
+                <b>{count}</b>
+                <span>家</span>
+              </button>
+            </div>
+          </Html>
+        );
+      })}
+    </>
+  );
+});
 
 const ProjectLabels = memo(function ProjectLabels({
   locatedProjects,
@@ -547,12 +688,62 @@ const ProjectLabelOverlay = memo(function ProjectLabelOverlay({
   );
 });
 
+const ClusterDetailsOverlay = memo(function ClusterDetailsOverlay({
+  cluster,
+  coordinateMode,
+  onClose,
+  onSelectProject,
+}: {
+  cluster: ProjectCluster | null;
+  coordinateMode: CoordinateMode;
+  onClose: () => void;
+  onSelectProject: (projectId: number) => void;
+}) {
+  if (!cluster) return null;
+
+  const coordinateLevel = coordinateMode === "address" ? "区县级" : "地级市";
+  return (
+    <aside className="cluster-details" aria-label="同坐标公司清单">
+      <header>
+        <div>
+          <span>同坐标项目</span>
+          <strong>{cluster.projects.length} 家公司</strong>
+        </div>
+        <button type="button" aria-label="关闭同坐标公司清单" onClick={onClose}><X size={14} /></button>
+      </header>
+      <p>以下公司共用一个{coordinateLevel}地图坐标，位置未做偏移。</p>
+      <div className="cluster-company-list">
+        {cluster.projects.map(({ project }) => (
+          <button
+            key={project.id}
+            className="cluster-company-row"
+            type="button"
+            data-project-id={project.id}
+            aria-label={`定位公司 ${companyCode(project)} ${project.company}`}
+            onClick={() => onSelectProject(project.id)}
+          >
+            <span>{companyCode(project)}</span>
+            <div>
+              <strong>{project.company}</strong>
+              <small>{project.displayCityLabel || project.displayCity}{project.district ? ` · ${project.district}` : ""}</small>
+            </div>
+          </button>
+        ))}
+      </div>
+      <footer><LocateFixed size={13} /> {cluster.coordinate.lat.toFixed(4)}°N, {cluster.coordinate.lng.toFixed(4)}°E</footer>
+    </aside>
+  );
+});
+
 function SelectedBeacon({
   project,
   coordinateMode,
   mapData,
   theme,
   reducedMotion,
+  cluster,
+  showCallout,
+  onOpenCluster,
   onClearSelection,
 }: {
   project: ProjectRecord | null;
@@ -560,6 +751,9 @@ function SelectedBeacon({
   mapData: ChinaMapDataset;
   theme: ThemeMode;
   reducedMotion: boolean;
+  cluster: ProjectCluster | null;
+  showCallout: boolean;
+  onOpenCluster: () => void;
   onClearSelection: () => void;
 }) {
   const groupRef = useRef<Group>(null);
@@ -665,20 +859,35 @@ function SelectedBeacon({
         <meshBasicMaterial ref={ringMaterialRef} color={accent} transparent opacity={0.7} side={DoubleSide} toneMapped={false} />
       </mesh>
       <pointLight color={accent} intensity={1.8} distance={3.8} />
-      <Html position={[0.18, 0.18, 0]} center={false} zIndexRange={[100, 0]}>
-        <article
-          ref={calloutRef}
-          className="map-callout"
-          onPointerDown={(event) => event.stopPropagation()}
-          onPointerUp={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button type="button" aria-label="关闭项目详情" onClick={onClearSelection}><X size={13} /></button>
-          <span>{companyCode(project)} · {project.displayCityLabel || project.displayCity}</span>
-          <strong>{project.company}</strong>
-          <small>{project.district || project.prefectureCommon}</small>
-        </article>
-      </Html>
+      {showCallout ? (
+        <Html position={[0.18, 0.18, 0]} center={false} zIndexRange={[100, 0]}>
+          <article
+            ref={calloutRef}
+            className="map-callout"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button className="map-callout-close" type="button" aria-label="关闭项目详情" onClick={onClearSelection}><X size={13} /></button>
+            <span>{companyCode(project)} · {project.displayCityLabel || project.displayCity}</span>
+            <strong>{project.company}</strong>
+            <small>{project.district || project.prefectureCommon}</small>
+            {cluster ? (
+              <button
+                className="map-callout-cluster"
+                type="button"
+                aria-label={`展开同坐标的 ${cluster.projects.length} 家公司`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenCluster();
+                }}
+              >
+                <span>同坐标公司</span><b>{cluster.projects.length} 家</b>
+              </button>
+            ) : null}
+          </article>
+        </Html>
+      ) : null}
     </group>
   );
 }
@@ -904,7 +1113,6 @@ function CameraRig({
 }
 
 function Scene({
-  projects,
   selectedProject,
   coordinateMode,
   theme,
@@ -913,10 +1121,15 @@ function Scene({
   command,
   reducedMotion,
   showCompanyLabels,
+  showClusterCounts,
   zoomLevel,
   labelButtonRefs,
+  standaloneProjects,
+  clusteredProjects,
+  expandedClusterKey,
   onSelectProvince,
   onSelectProject,
+  onToggleCluster,
   onClearSelection,
   onZoomChange,
   onNationalViewChange,
@@ -925,16 +1138,23 @@ function Scene({
   command: ViewCommand;
   reducedMotion: boolean;
   showCompanyLabels: boolean;
+  showClusterCounts: boolean;
   zoomLevel: number;
   labelButtonRefs: { current: Map<number, HTMLButtonElement> };
+  standaloneProjects: LocatedProject[];
+  clusteredProjects: ProjectCluster[];
+  expandedClusterKey: string | null;
   onSelectProvince: (name: string) => void;
+  onToggleCluster: (key: string) => void;
   onZoomChange: (zoom: number) => void;
   onNationalViewChange: (isNational: boolean) => void;
 }) {
   const night = theme === "night";
-  const locatedProjects = useMemo(
-    () => projects.map((project) => ({ project, position: projectWorldPoint(project, coordinateMode, mapData) })).filter((item): item is LocatedProject => Boolean(item.position)),
-    [coordinateMode, mapData, projects],
+  const selectedCluster = useMemo(
+    () => (selectedProject
+      ? clusteredProjects.find((cluster) => cluster.projects.some(({ project }) => project.id === selectedProject.id)) ?? null
+      : null),
+    [clusteredProjects, selectedProject],
   );
   return (
     <>
@@ -946,9 +1166,23 @@ function Scene({
       <NetworkField theme={theme} reducedMotion={reducedMotion} />
       {!reducedMotion && <Sparkles count={90} scale={[20, 15, 1.2]} size={1.4} speed={0.12} color={night ? "#8dffc2" : "#245dff"} opacity={night ? 0.32 : 0.15} position={[0, 0, -0.35]} />}
       <ProvinceLayer mapData={mapData} selectedProvince={selectedProvince} theme={theme} reducedMotion={reducedMotion} onSelectProvince={onSelectProvince} />
-      <ProjectInstances locatedProjects={locatedProjects} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
-      <ProjectLabels locatedProjects={locatedProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} buttonRefs={labelButtonRefs} selectedProjectId={selectedProject?.id ?? null} />
-      <SelectedBeacon project={selectedProject} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onClearSelection={onClearSelection} />
+      <ProjectInstances locatedProjects={standaloneProjects} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
+      <ProjectClusterGhosts clusters={clusteredProjects} theme={theme} reducedMotion={reducedMotion} />
+      <ProjectClusterMarkers clusters={clusteredProjects} visible={showClusterCounts} expandedClusterKey={expandedClusterKey} onToggleCluster={onToggleCluster} />
+      <ProjectLabels locatedProjects={standaloneProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} buttonRefs={labelButtonRefs} selectedProjectId={selectedProject?.id ?? null} />
+      <SelectedBeacon
+        project={selectedProject}
+        coordinateMode={coordinateMode}
+        mapData={mapData}
+        theme={theme}
+        reducedMotion={reducedMotion}
+        cluster={selectedCluster}
+        showCallout={expandedClusterKey === null}
+        onOpenCluster={() => {
+          if (selectedCluster) onToggleCluster(selectedCluster.key);
+        }}
+        onClearSelection={onClearSelection}
+      />
       <ProvinceLabels mapData={mapData} selectedProvince={selectedProvince} />
       <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} onNationalViewChange={onNationalViewChange} />
     </>
@@ -956,14 +1190,31 @@ function Scene({
 }
 
 function StaticMapFallback({ mapData, projects, coordinateMode, theme }: Pick<WebGLMapProps, "mapData" | "projects" | "coordinateMode" | "theme">) {
+  const coordinateClusters = new Map<string, { coordinate: Coord; count: number }>();
+  projects.forEach((project) => {
+    const coordinate = coordFor(project, coordinateMode);
+    if (!coordinate) return;
+    const key = `${coordinate.lng}:${coordinate.lat}`;
+    const cluster = coordinateClusters.get(key);
+    if (cluster) {
+      cluster.count += 1;
+      return;
+    }
+    coordinateClusters.set(key, { coordinate, count: 1 });
+  });
+
   return (
     <svg className="static-map-fallback" viewBox={`0 0 ${mapData.metadata.width} ${mapData.metadata.height}`} role="img" aria-label="中国认证项目分布地图">
       {mapData.provinces.map((province) => <path key={province.code} d={province.path} />)}
-      {projects.map((project) => {
-        const coord = coordFor(project, coordinateMode);
-        if (!coord) return null;
-        const point = projectMapPoint(coord, mapData);
-        return <circle key={project.id} cx={point.x} cy={point.y} r={theme === "night" ? 2.6 : 2.2} />;
+      {[...coordinateClusters.entries()].map(([key, cluster]) => {
+        const point = projectMapPoint(cluster.coordinate, mapData);
+        const isCluster = cluster.count > 1;
+        return (
+          <g key={key} className={isCluster ? "static-map-cluster" : undefined}>
+            <circle cx={point.x} cy={point.y} r={isCluster ? (theme === "night" ? 4.8 : 4.5) : (theme === "night" ? 2.6 : 2.2)} />
+            {isCluster ? <text x={point.x} y={point.y + 0.8}>{cluster.count}</text> : null}
+          </g>
+        );
       })}
     </svg>
   );
@@ -980,6 +1231,7 @@ function webGLAvailable() {
 
 export default function WebGLMap(props: WebGLMapProps) {
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
+  const [expandedClusterKey, setExpandedClusterKey] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
   const [command, setCommand] = useState<ViewCommand>({ id: 0, type: "reset" });
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -990,6 +1242,25 @@ export default function WebGLMap(props: WebGLMapProps) {
   const showCompanyLabels = zoomLevel >= COMPANY_LABEL_ZOOM;
   const selectedProjectId = props.selectedProject?.id ?? null;
   const activeProvince = selectedProjectId === null ? selectedProvince : null;
+  const showClusterCounts = activeProvince !== null || zoomLevel >= CLUSTER_MARKER_ZOOM;
+  const locatedProjects = useMemo(
+    () => props.projects.map((project) => locateProject(project, props.coordinateMode, props.mapData)).filter((item): item is LocatedProject => item !== null),
+    [props.coordinateMode, props.mapData, props.projects],
+  );
+  const projectClusters = useMemo(() => clusterProjects(locatedProjects), [locatedProjects]);
+  const standaloneProjects = useMemo(
+    () => projectClusters.filter((cluster) => cluster.projects.length === 1).flatMap((cluster) => cluster.projects),
+    [projectClusters],
+  );
+  const clusteredProjects = useMemo(
+    () => projectClusters.filter((cluster) => cluster.projects.length > 1),
+    [projectClusters],
+  );
+  const expandedCluster = useMemo(
+    () => projectClusters.find((cluster) => cluster.key === expandedClusterKey) ?? null,
+    [expandedClusterKey, projectClusters],
+  );
+  const labelProjects = useMemo(() => standaloneProjects.map(({ project }) => project), [standaloneProjects]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -1002,9 +1273,18 @@ export default function WebGLMap(props: WebGLMapProps) {
     if (selectedProjectId !== null) setSelectedProvince(null);
   }, [selectedProjectId]);
 
+  useEffect(() => {
+    setExpandedClusterKey(null);
+  }, [props.coordinateMode, props.projects]);
+
+  useEffect(() => {
+    if (!showClusterCounts) setExpandedClusterKey(null);
+  }, [showClusterCounts]);
+
   const issueCommand = (type: ViewCommand["type"]) => {
     if (type === "reset") {
       setSelectedProvince(null);
+      setExpandedClusterKey(null);
       props.onClearSelection();
     }
     setCommand((current) => ({ id: current.id + 1, type }));
@@ -1012,13 +1292,19 @@ export default function WebGLMap(props: WebGLMapProps) {
 
   const handleSelectProject = useCallback((projectId: number) => {
     setSelectedProvince(null);
+    setExpandedClusterKey(null);
     props.onSelectProject(projectId);
   }, [props.onSelectProject]);
 
   const handleSelectProvince = useCallback((name: string) => {
+    setExpandedClusterKey(null);
     props.onClearSelection();
     setSelectedProvince((current) => (current === name ? null : name));
   }, [props.onClearSelection]);
+
+  const handleToggleCluster = useCallback((clusterKey: string) => {
+    setExpandedClusterKey((current) => (current === clusterKey ? null : clusterKey));
+  }, []);
 
   return (
     <div className="webgl-map">
@@ -1027,6 +1313,7 @@ export default function WebGLMap(props: WebGLMapProps) {
           dpr={[1, 1.65]}
           camera={{ position: [0, -0.4, 38], fov: 30, near: 0.1, far: 200 }}
           gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
+          onPointerMissed={() => setExpandedClusterKey(null)}
           fallback={<StaticMapFallback mapData={props.mapData} projects={props.projects} coordinateMode={props.coordinateMode} theme={props.theme} />}
         >
           <Scene
@@ -1035,12 +1322,17 @@ export default function WebGLMap(props: WebGLMapProps) {
             command={command}
             reducedMotion={reducedMotion}
             showCompanyLabels={showCompanyLabels}
+            showClusterCounts={showClusterCounts}
             zoomLevel={zoomLevel}
             labelButtonRefs={labelButtonRefs}
+            standaloneProjects={standaloneProjects}
+            clusteredProjects={clusteredProjects}
+            expandedClusterKey={expandedClusterKey}
             onZoomChange={setZoomLevel}
             onNationalViewChange={setIsNationalView}
             onSelectProvince={handleSelectProvince}
             onSelectProject={handleSelectProject}
+            onToggleCluster={handleToggleCluster}
           />
         </Canvas>
       ) : (
@@ -1048,10 +1340,17 @@ export default function WebGLMap(props: WebGLMapProps) {
       )}
 
       <ProjectLabelOverlay
-        projects={props.projects}
+        projects={labelProjects}
         visible={showCompanyLabels}
         selectedProjectId={selectedProjectId}
         buttonRefs={labelButtonRefs}
+        onSelectProject={handleSelectProject}
+      />
+
+      <ClusterDetailsOverlay
+        cluster={expandedCluster}
+        coordinateMode={props.coordinateMode}
+        onClose={() => setExpandedClusterKey(null)}
         onSelectProject={handleSelectProject}
       />
 
@@ -1069,8 +1368,8 @@ export default function WebGLMap(props: WebGLMapProps) {
         {showHelp && (
           <div className="map-help-body">
             <span><MousePointer2 size={13} />拖拽移动 · 滚轮缩放 · 最高 20×</span>
-            <span><i className="legend-dot" />光点为项目，悬停可查看公司</span>
-            <span><i className="legend-label" />4× 起显示公司名，10× 后显示视野内全部公司</span>
+            <span><i className="legend-dot" />光点为单项目；数字点为同坐标公司</span>
+            <span><i className="legend-label" />选中省份或 4× 起显示数字点；点击可展开全部公司</span>
           </div>
         )}
       </div>

@@ -502,6 +502,237 @@ p {
   outline: none;
 }
 
+.project-cluster-anchor {
+  pointer-events: auto;
+}
+
+.project-cluster-marker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 34px;
+  height: 30px;
+  gap: 2px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 78%, var(--line));
+  border-radius: 99px;
+  color: var(--accent-contrast);
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--accent-soft));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24), 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+  font-size: 9px;
+  line-height: 1;
+  transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.project-cluster-marker::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
+  border-radius: inherit;
+  opacity: 0;
+  animation: cluster-marker-halo 2.8s ease-out infinite;
+}
+
+.project-cluster-marker b {
+  display: grid;
+  place-items: center;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 4px;
+  border-radius: 50%;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-cluster-marker span {
+  color: var(--text);
+  font-weight: 720;
+}
+
+.project-cluster-marker:hover,
+.project-cluster-marker:focus-visible,
+.project-cluster-marker.is-expanded {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--surface-strong) 76%, var(--accent-soft));
+  box-shadow: 0 11px 27px rgba(0, 0, 0, 0.3), 0 0 0 5px color-mix(in srgb, var(--accent) 17%, transparent);
+  outline: none;
+  transform: scale(1.06);
+}
+
+.project-cluster-marker.is-expanded::before {
+  animation-duration: 1.45s;
+}
+
+@keyframes cluster-marker-halo {
+  0% {
+    opacity: 0.54;
+    transform: scale(0.72);
+  }
+
+  72%,
+  100% {
+    opacity: 0;
+    transform: scale(1.23);
+  }
+}
+
+.cluster-details {
+  position: absolute;
+  z-index: 12;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  width: min(290px, calc(100% - 36px));
+  max-height: min(450px, calc(100% - 36px));
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.32), 0 0 30px var(--accent-soft);
+  backdrop-filter: blur(20px);
+  animation: cluster-details-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cluster-details header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 10px 9px 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cluster-details header div {
+  display: grid;
+  gap: 3px;
+}
+
+.cluster-details header span,
+.cluster-details p,
+.cluster-details footer,
+.cluster-company-row small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.cluster-details header strong {
+  font-size: 13px;
+  line-height: 1.15;
+}
+
+.cluster-details header button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.cluster-details header button:hover,
+.cluster-details header button:focus-visible {
+  color: var(--text);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.cluster-details > p {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.45;
+}
+
+.cluster-company-list {
+  display: grid;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.cluster-company-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.cluster-company-row:last-child {
+  border-bottom: 0;
+}
+
+.cluster-company-row > span {
+  padding-top: 1px;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cluster-company-row div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cluster-company-row strong {
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-company-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-company-row:hover,
+.cluster-company-row:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.cluster-details footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes cluster-details-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
 .map-callout {
   position: relative;
   display: grid;
@@ -529,7 +760,7 @@ p {
   box-shadow: 0 0 12px var(--accent);
 }
 
-.map-callout button {
+.map-callout-close {
   position: absolute;
   top: 7px;
   right: 7px;
@@ -541,6 +772,40 @@ p {
   border-radius: 5px;
   color: var(--muted);
   background: transparent;
+}
+
+.map-callout-cluster {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  margin-top: 3px;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 5px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+  font-size: 9px;
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.map-callout-cluster span {
+  color: var(--muted);
+}
+
+.map-callout-cluster b {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+}
+
+.map-callout-cluster:hover,
+.map-callout-cluster:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+  transform: translateY(-1px);
 }
 
 .map-callout span,
@@ -695,6 +960,15 @@ p {
 
 .static-map-fallback circle {
   fill: var(--accent);
+}
+
+.static-map-cluster text {
+  fill: var(--accent-contrast);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 5px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
 }
 
 .side-panel {
@@ -1273,6 +1547,21 @@ input:focus-visible {
   .map-callout {
     width: min(180px, 58vw);
   }
+
+  .cluster-details {
+    top: 58px;
+    right: 11px;
+    width: min(260px, calc(100% - 22px));
+    max-height: min(340px, calc(100% - 156px));
+  }
+
+  .cluster-details header {
+    padding: 10px 8px 8px 11px;
+  }
+
+  .cluster-company-row {
+    padding: 8px 10px;
+  }
 }
 
 @media (max-width: 430px) {
@@ -1291,12 +1580,23 @@ input:focus-visible {
   .map-precision-badge {
     max-width: 150px;
   }
+
+  .cluster-details {
+    top: 54px;
+  }
 }
 
 @media (max-width: 350px) {
   .map-callout,
   .map-precision-badge {
     display: none;
+  }
+
+  .cluster-details {
+    top: 10px;
+    right: 8px;
+    width: min(238px, calc(100% - 16px));
+    max-height: min(292px, calc(100% - 94px));
   }
 
   .map-controls {
