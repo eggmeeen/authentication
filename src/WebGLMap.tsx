@@ -49,8 +49,9 @@ interface LocatedProject {
 }
 
 interface ProjectLabelLayout extends LocatedProject {
-  side: "left" | "right";
-  offsetY: number;
+  groupIndex: number;
+  groupSize: number;
+  groupHasSelected: boolean;
 }
 
 function isIntentionalClick(event: ThreeEvent<MouseEvent>) {
@@ -308,19 +309,17 @@ const ProjectLabels = memo(function ProjectLabels({
   locatedProjects,
   visible,
   zoomLevel,
+  buttonRefs,
   selectedProjectId,
-  onSelectProject,
 }: {
   locatedProjects: LocatedProject[];
   visible: boolean;
   zoomLevel: number;
+  buttonRefs: { current: Map<number, HTMLButtonElement> };
   selectedProjectId: number | null;
-  onSelectProject: (projectId: number) => void;
 }) {
-  const buttonRefs = useRef(new Map<number, HTMLButtonElement>());
   const projectedPointRef = useRef(new Vector3());
   const wasVisibleRef = useRef(false);
-  const occupiedCellsRef = useRef(new Set<string>());
   const labelLayouts = useMemo<ProjectLabelLayout[]>(() => {
     const groups = new Map<string, LocatedProject[]>();
     locatedProjects.forEach((item) => {
@@ -332,24 +331,23 @@ const ProjectLabels = memo(function ProjectLabels({
 
     const layouts: ProjectLabelLayout[] = [];
     groups.forEach((group) => {
-      const rows = Math.ceil(group.length / 2);
+      const groupHasSelected = group.some((item) => item.project.id === selectedProjectId);
       group.forEach((item, index) => {
-        const row = Math.floor(index / 2);
         layouts.push({
           ...item,
-          side: index % 2 === 0 ? "right" : "left",
-          offsetY: (row - (rows - 1) / 2) * 34,
+          groupIndex: index,
+          groupSize: group.length,
+          groupHasSelected,
         });
       });
     });
     return layouts;
-  }, [locatedProjects]);
-  const orderedLabelLayouts = useMemo(() => {
-    if (selectedProjectId === null) return labelLayouts;
-    const selected = labelLayouts.find((layout) => layout.project.id === selectedProjectId);
-    if (!selected) return labelLayouts;
-    return [selected, ...labelLayouts.filter((layout) => layout.project.id !== selectedProjectId)];
-  }, [labelLayouts, selectedProjectId]);
+  }, [locatedProjects, selectedProjectId]);
+
+  useLayoutEffect(() => {
+    buttonRefs.current.forEach((button) => { button.hidden = true; });
+    wasVisibleRef.current = false;
+  }, [labelLayouts]);
 
   useFrame(({ camera, size }) => {
     if (!visible) {
@@ -360,12 +358,20 @@ const ProjectLabels = memo(function ProjectLabels({
 
     wasVisibleRef.current = true;
     const declutter = zoomLevel < 10;
-    const occupiedCells = occupiedCellsRef.current;
-    occupiedCells.clear();
+    const candidates: Array<{
+      anchorY: number;
+      button: HTMLButtonElement;
+      layout: ProjectLabelLayout;
+      x: number;
+    }> = [];
 
-    orderedLabelLayouts.forEach((layout) => {
+    labelLayouts.forEach((layout) => {
       const button = buttonRefs.current.get(layout.project.id);
       if (!button) return;
+      if (layout.project.id === selectedProjectId) {
+        button.hidden = true;
+        return;
+      }
       const projected = projectedPointRef.current.copy(layout.position).project(camera);
       const onScreen = projected.z > -1 && projected.z < 1 && projected.x > -0.99 && projected.x < 0.99 && projected.y > -0.99 && projected.y < 0.99;
       if (!onScreen) {
@@ -374,65 +380,141 @@ const ProjectLabels = memo(function ProjectLabels({
       }
 
       button.hidden = false;
-      const x = (projected.x * 0.5 + 0.5) * size.width;
-      const rawY = (-projected.y * 0.5 + 0.5) * size.height + layout.offsetY;
-      const y = Math.max(22, Math.min(size.height - 22, rawY));
-      const maxWidth = size.width < 600 ? 190 : 260;
-      const renderSide = x > size.width - maxWidth - 18 ? "left" : x < maxWidth + 18 ? "right" : layout.side;
-      if (declutter) {
-        const width = Math.min(maxWidth, 44 + layout.project.company.length * 10);
-        const height = layout.project.company.length > 18 ? 40 : 28;
-        const left = renderSide === "left" ? x - 11 - width : x + 11;
-        const right = renderSide === "left" ? x - 11 : x + 11 + width;
-        const top = y - height / 2;
-        const bottom = y + height / 2;
-        const cells: string[] = [];
-        for (let cellX = Math.floor(left / 72); cellX <= Math.floor(right / 72); cellX += 1) {
-          for (let cellY = Math.floor(top / 26); cellY <= Math.floor(bottom / 26); cellY += 1) {
-            cells.push(`${cellX}:${cellY}`);
+      candidates.push({
+        anchorY: (-projected.y * 0.5 + 0.5) * size.height,
+        button,
+        layout,
+        x: (projected.x * 0.5 + 0.5) * size.width,
+      });
+    });
+
+    candidates.sort((a, b) => (
+      Number(b.layout.groupHasSelected) - Number(a.layout.groupHasSelected)
+      || b.layout.groupSize - a.layout.groupSize
+      || a.anchorY - b.anchorY
+      || a.x - b.x
+    ));
+
+    type LabelRect = { bottom: number; left: number; right: number; top: number };
+    const placedRects: LabelRect[] = [];
+    const firstButton = buttonRefs.current.values().next().value as HTMLButtonElement | undefined;
+    const mapRoot = firstButton?.closest(".webgl-map");
+    const canvasRect = mapRoot?.querySelector("canvas")?.getBoundingClientRect();
+    const calloutRect = selectedProjectId === null ? null : mapRoot?.querySelector(".map-callout")?.getBoundingClientRect();
+    if (canvasRect && calloutRect) {
+      placedRects.push({
+        bottom: calloutRect.bottom - canvasRect.top + 6,
+        left: calloutRect.left - canvasRect.left - 6,
+        right: calloutRect.right - canvasRect.left + 6,
+        top: calloutRect.top - canvasRect.top - 6,
+      });
+    }
+
+    const verticalOffsets = [0];
+    if (!declutter) {
+      for (let distance = 8; distance <= size.height; distance += 8) {
+        verticalOffsets.push(-distance, distance);
+      }
+    }
+    const overlaps = (a: LabelRect, b: LabelRect) => (
+      a.left < b.right + 4
+      && a.right > b.left - 4
+      && a.top < b.bottom + 4
+      && a.bottom > b.top - 4
+    );
+
+    candidates.forEach(({ anchorY, button, layout, x }) => {
+      const maxWidth = size.width < 600 ? 170 : 260;
+      const hasRoomOnLeft = x >= maxWidth + 18;
+      const forceLeft = (layout.groupHasSelected && hasRoomOnLeft) || x > size.width - maxWidth - 18;
+      const forceRight = !forceLeft && (layout.groupHasSelected || x < maxWidth + 18);
+      const singleColumn = forceLeft || forceRight;
+      const preferredSide = forceLeft ? "left" : forceRight ? "right" : layout.groupIndex % 2 === 0 ? "right" : "left";
+      const sideChoices = declutter
+        ? [preferredSide]
+        : [preferredSide, preferredSide === "left" ? "right" : "left"];
+      const row = singleColumn ? layout.groupIndex : Math.floor(layout.groupIndex / 2);
+      const rows = singleColumn ? layout.groupSize : Math.ceil(layout.groupSize / 2);
+      const rowSpacing = size.width < 600 ? 31 : 34;
+      const stackHalfHeight = ((rows - 1) * rowSpacing) / 2 + 16;
+      const centerY = Math.max(16 + stackHalfHeight, Math.min(size.height - 16 - stackHalfHeight, anchorY));
+      const baseY = centerY + (row - (rows - 1) / 2) * rowSpacing;
+      const measured = button.getBoundingClientRect();
+      const width = Math.min(maxWidth, measured.width || 44 + layout.project.company.length * 10);
+      const height = measured.height || (layout.project.company.length > 18 ? 40 : 28);
+      let placement: { side: string; y: number } | null = null;
+
+      for (const side of sideChoices) {
+        for (const offset of verticalOffsets) {
+          const y = baseY + offset;
+          const left = side === "left" ? x - 11 - width : x + 11;
+          const rect = {
+            bottom: y + height / 2,
+            left,
+            right: left + width,
+            top: y - height / 2,
+          };
+          const withinCanvas = rect.left >= 4 && rect.right <= size.width - 4 && rect.top >= 4 && rect.bottom <= size.height - 4;
+          if (withinCanvas && !placedRects.some((placed) => overlaps(rect, placed))) {
+            placement = { side, y };
+            placedRects.push(rect);
+            break;
           }
         }
-        const overlaps = cells.some((cell) => occupiedCells.has(cell));
-        if (overlaps && layout.project.id !== selectedProjectId) {
-          button.hidden = true;
-          return;
-        }
-        cells.forEach((cell) => occupiedCells.add(cell));
+        if (placement) break;
       }
 
-      button.style.transform = renderSide === "left"
-        ? `translate3d(${x - 11}px, ${y}px, 0) translate(-100%, -50%)`
-        : `translate3d(${x + 11}px, ${y}px, 0) translate(0, -50%)`;
+      if (!placement) {
+        button.hidden = true;
+        return;
+      }
+      button.style.transform = placement.side === "left"
+        ? `translate3d(${x - 11}px, ${placement.y}px, 0) translate(-100%, -50%)`
+        : `translate3d(${x + 11}px, ${placement.y}px, 0) translate(0, -50%)`;
     });
   });
 
+  return null;
+});
+
+const ProjectLabelOverlay = memo(function ProjectLabelOverlay({
+  projects,
+  visible,
+  selectedProjectId,
+  buttonRefs,
+  onSelectProject,
+}: {
+  projects: ProjectRecord[];
+  visible: boolean;
+  selectedProjectId: number | null;
+  buttonRefs: { current: Map<number, HTMLButtonElement> };
+  onSelectProject: (projectId: number) => void;
+}) {
   return (
-    <Html fullscreen zIndexRange={[8, 0]} style={{ pointerEvents: "none" }}>
-      <div className="project-label-layer" aria-hidden={!visible}>
-        {labelLayouts.map(({ project }) => (
-          <button
-            key={project.id}
-            ref={(node) => {
-              if (node) buttonRefs.current.set(project.id, node);
-              else buttonRefs.current.delete(project.id);
-            }}
-            className={`project-company-label ${selectedProjectId === project.id ? "is-active" : ""}`}
-            type="button"
-            hidden={!visible}
-            aria-label={`选择公司 ${companyCode(project)} ${project.company}`}
-            title={project.company}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectProject(project.id);
-            }}
-          >
-            <span>{companyCode(project)}</span>
-            <b>{project.company}</b>
-          </button>
-        ))}
-      </div>
-    </Html>
+    <div className="project-label-layer" aria-hidden={!visible}>
+      {projects.map((project) => (
+        <button
+          key={project.id}
+          ref={(node) => {
+            if (node) buttonRefs.current.set(project.id, node);
+            else buttonRefs.current.delete(project.id);
+          }}
+          className={`project-company-label ${selectedProjectId === project.id ? "is-active" : ""}`}
+          type="button"
+          hidden
+          aria-label={`选择公司 ${companyCode(project)} ${project.company}`}
+          title={project.company}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectProject(project.id);
+          }}
+        >
+          <span>{companyCode(project)}</span>
+          <b>{project.company}</b>
+        </button>
+      ))}
+    </div>
   );
 });
 
@@ -454,6 +536,8 @@ function SelectedBeacon({
   const groupRef = useRef<Group>(null);
   const ringRef = useRef<Mesh>(null);
   const ringMaterialRef = useRef<MeshBasicMaterial>(null);
+  const calloutRef = useRef<HTMLElement>(null);
+  const calloutAnchorRef = useRef(new Vector3());
   const position = useMemo(
     () => (project ? projectWorldPoint(project, coordinateMode, mapData, 0.58) : null),
     [coordinateMode, mapData, project],
@@ -463,6 +547,23 @@ function SelectedBeacon({
     const overviewDistance = overviewDistanceForAspect(size.width / Math.max(1, size.height));
     const beaconScale = Math.max(0.18, Math.min(1, Math.abs(camera.position.z) / overviewDistance));
     groupRef.current?.scale.setScalar(beaconScale);
+
+    if (position && calloutRef.current) {
+      const anchor = calloutAnchorRef.current
+        .set(position.x + 0.18 * beaconScale, position.y + 0.18 * beaconScale, position.z)
+        .project(camera);
+      const x = (anchor.x * 0.5 + 0.5) * size.width;
+      const y = (-anchor.y * 0.5 + 0.5) * size.height;
+      const width = calloutRef.current.offsetWidth;
+      const height = calloutRef.current.offsetHeight;
+      const fitsRight = x + width <= size.width - 12;
+      const fitsLeft = x - width >= 12;
+      const fitsBelow = y + height <= size.height - 12;
+      const fitsAbove = y - height >= 12;
+      const translateX = fitsRight ? "0px" : fitsLeft ? "calc(-100% - 18px)" : "calc(-50%)";
+      const translateY = fitsBelow ? "0px" : fitsAbove ? "calc(-100% - 18px)" : "calc(-50%)";
+      calloutRef.current.style.transform = `translate3d(${translateX}, ${translateY}, 0)`;
+    }
 
     if (ringRef.current && ringMaterialRef.current && !reducedMotion) {
       const progress = (clock.elapsedTime * 0.56) % 1;
@@ -486,7 +587,7 @@ function SelectedBeacon({
       </mesh>
       <pointLight color={accent} intensity={1.8} distance={3.8} />
       <Html position={[0.18, 0.18, 0]} center={false} zIndexRange={[100, 0]}>
-        <article className="map-callout">
+        <article ref={calloutRef} className="map-callout">
           <button type="button" aria-label="关闭项目详情" onClick={onClearSelection}><X size={13} /></button>
           <span>{companyCode(project)} · {project.displayCityLabel || project.displayCity}</span>
           <strong>{project.company}</strong>
@@ -629,7 +730,9 @@ function CameraRig({
   useEffect(() => {
     if (selectedProject) {
       const position = projectWorldPoint(selectedProject, coordinateMode, mapData, 0);
-      if (position) animateTo(position, aspect < 0.75 ? 34 : 21.5);
+      const controls = controlsRef.current;
+      const currentDistance = controls ? camera.position.distanceTo(controls.target) : resetDistance;
+      if (position) animateTo(position, Math.min(currentDistance, aspect < 0.75 ? 34 : 21.5));
       return;
     }
     if (selectedProvince) {
@@ -714,6 +817,7 @@ function Scene({
   reducedMotion,
   showCompanyLabels,
   zoomLevel,
+  labelButtonRefs,
   onSelectProvince,
   onSelectProject,
   onClearSelection,
@@ -724,6 +828,7 @@ function Scene({
   reducedMotion: boolean;
   showCompanyLabels: boolean;
   zoomLevel: number;
+  labelButtonRefs: { current: Map<number, HTMLButtonElement> };
   onSelectProvince: (name: string) => void;
   onZoomChange: (zoom: number) => void;
 }) {
@@ -743,7 +848,7 @@ function Scene({
       {!reducedMotion && <Sparkles count={90} scale={[20, 15, 1.2]} size={1.4} speed={0.12} color={night ? "#8dffc2" : "#245dff"} opacity={night ? 0.32 : 0.15} position={[0, 0, -0.35]} />}
       <ProvinceLayer mapData={mapData} selectedProvince={selectedProvince} theme={theme} reducedMotion={reducedMotion} onSelectProvince={onSelectProvince} />
       <ProjectInstances locatedProjects={locatedProjects} theme={theme} reducedMotion={reducedMotion} onSelectProject={onSelectProject} />
-      <ProjectLabels locatedProjects={locatedProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} selectedProjectId={selectedProject?.id ?? null} onSelectProject={onSelectProject} />
+      <ProjectLabels locatedProjects={locatedProjects} visible={showCompanyLabels} zoomLevel={zoomLevel} buttonRefs={labelButtonRefs} selectedProjectId={selectedProject?.id ?? null} />
       <SelectedBeacon project={selectedProject} coordinateMode={coordinateMode} mapData={mapData} theme={theme} reducedMotion={reducedMotion} onClearSelection={onClearSelection} />
       <ProvinceLabels mapData={mapData} selectedProvince={selectedProvince} />
       <CameraRig selectedProject={selectedProject} selectedProvince={selectedProvince} coordinateMode={coordinateMode} mapData={mapData} command={command} reducedMotion={reducedMotion} onZoomChange={onZoomChange} />
@@ -779,6 +884,7 @@ export default function WebGLMap(props: WebGLMapProps) {
   const [showHelp, setShowHelp] = useState(true);
   const [command, setCommand] = useState<ViewCommand>({ id: 0, type: "reset" });
   const [zoomLevel, setZoomLevel] = useState(1);
+  const labelButtonRefs = useRef(new Map<number, HTMLButtonElement>());
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const canRenderWebGL = useMemo(webGLAvailable, []);
   const showCompanyLabels = zoomLevel >= COMPANY_LABEL_ZOOM;
@@ -824,6 +930,7 @@ export default function WebGLMap(props: WebGLMapProps) {
             reducedMotion={reducedMotion}
             showCompanyLabels={showCompanyLabels}
             zoomLevel={zoomLevel}
+            labelButtonRefs={labelButtonRefs}
             onZoomChange={setZoomLevel}
             onSelectProvince={handleSelectProvince}
             onSelectProject={handleSelectProject}
@@ -832,6 +939,14 @@ export default function WebGLMap(props: WebGLMapProps) {
       ) : (
         <StaticMapFallback mapData={props.mapData} projects={props.projects} coordinateMode={props.coordinateMode} theme={props.theme} />
       )}
+
+      <ProjectLabelOverlay
+        projects={props.projects}
+        visible={showCompanyLabels}
+        selectedProjectId={props.selectedProject?.id ?? null}
+        buttonRefs={labelButtonRefs}
+        onSelectProject={handleSelectProject}
+      />
 
       <div className="map-precision-badge"><LocateFixed size={14} /> WebGL 高精度矢量图</div>
 
