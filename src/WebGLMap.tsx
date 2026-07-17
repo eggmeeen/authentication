@@ -400,13 +400,16 @@ const ProjectLabels = memo(function ProjectLabels({
     const firstButton = buttonRefs.current.values().next().value as HTMLButtonElement | undefined;
     const mapRoot = firstButton?.closest(".webgl-map");
     const canvasRect = mapRoot?.querySelector("canvas")?.getBoundingClientRect();
-    const calloutRect = selectedProjectId === null ? null : mapRoot?.querySelector(".map-callout")?.getBoundingClientRect();
-    if (canvasRect && calloutRect) {
-      placedRects.push({
-        bottom: calloutRect.bottom - canvasRect.top + 6,
-        left: calloutRect.left - canvasRect.left - 6,
-        right: calloutRect.right - canvasRect.left + 6,
-        top: calloutRect.top - canvasRect.top - 6,
+    if (canvasRect && mapRoot) {
+      mapRoot.querySelectorAll(".map-callout, .map-help, .map-controls, .map-status, .map-precision-badge, .map-scale-bar").forEach((element) => {
+        const blocked = element.getBoundingClientRect();
+        if (!blocked.width || !blocked.height) return;
+        placedRects.push({
+          bottom: blocked.bottom - canvasRect.top + 6,
+          left: blocked.left - canvasRect.left - 6,
+          right: blocked.right - canvasRect.left + 6,
+          top: blocked.top - canvasRect.top - 6,
+        });
       });
     }
 
